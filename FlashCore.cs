@@ -135,11 +135,8 @@ namespace ManikinApp
                     int cornerRadius = hole.Item2;
                     if (cornerRadius > 0)
                     {
-                        using (var path = new GraphicsPath())
-                        {
-                            AddRoundedRect(path, r, cornerRadius);
-                            region.Exclude(path);
-                        }
+                        using (var rounded = RoundedHole(r, cornerRadius))
+                            region.Exclude(rounded);
                     }
                     else
                     {
@@ -152,14 +149,40 @@ namespace ManikinApp
             catch { }
         }
 
-        static void AddRoundedRect(GraphicsPath path, Rectangle r, int radius)
+        // A window region is 1-bit, so a rounded hole can never be smooth on
+        // its own. The hole keeps ONLY the pixels the panel's rounded shape
+        // covers completely: Flash stays under every anti-aliased edge pixel
+        // and EdgeOverlay paints those on top with real alpha. A path-built
+        // region included half-covered pixels too, and those showed the page's
+        // dark background blended into the corner - the jagged dark steps.
+        static Region RoundedHole(Rectangle r, int radius)
         {
-            int d = Math.Max(1, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
-            path.AddArc(r.X, r.Y, d, d, 180, 90);
-            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
+            int rad = CornerRadius(r, radius);
+            var reg = new Region(new Rectangle(r.X, r.Y + rad, r.Width, r.Height - 2 * rad));
+            for (int j = 0; j < rad; j++)
+            {
+                int inset = CornerInset(rad, j);
+                int w = r.Width - 2 * inset;
+                if (w <= 0) continue;
+                reg.Union(new Rectangle(r.X + inset, r.Y + j, w, 1));
+                reg.Union(new Rectangle(r.X + inset, r.Bottom - 1 - j, w, 1));
+            }
+            return reg;
+        }
+
+        // CSS shrinks a radius that doesn't fit (the short dock on small windows).
+        internal static int CornerRadius(Rectangle r, int radius)
+        {
+            return Math.Max(0, Math.Min(radius, Math.Min(r.Width, r.Height) / 2));
+        }
+
+        // How many pixels of corner row j (0 = outermost) the rounded shape
+        // does NOT fully cover. A pixel is fully covered when its corner
+        // farthest from the arc center is still inside the circle.
+        internal static int CornerInset(int rad, int j)
+        {
+            double dy = rad - j;
+            return (int)Math.Ceiling(rad - Math.Sqrt(Math.Max(0, (double)rad * rad - dy * dy)) - 1e-9);
         }
 
         public void ClearOverlayHoles()

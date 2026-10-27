@@ -43,6 +43,9 @@ body.maximized .grip{display:none;}
 .win-btn:hover{background:rgba(255,255,255,.08);color:var(--text);}
 .win-btn.close:hover{background:var(--accent-2);color:#fff;}
 .win-btn svg{width:10px;height:10px;flex-shrink:0;}
+/* hairline between the settings button and the window buttons */
+.win-sep{width:1px;height:14px;align-self:center;margin:0 6px 0 3px;background:rgba(255,255,255,.18);}
+.titlebar.light .win-sep{background:rgba(0,0,0,.18);}
 .lb-field{display:flex;align-items:center;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:7px;overflow:hidden;}
 .lb-field .brk{font-family:Consolas,monospace;font-size:10px;color:var(--accent-2);padding:0 7px;}
 .lb-field input[type=text]{background:transparent;border:none;color:var(--text);font-family:Consolas,monospace;font-size:11px;height:26px;outline:none;padding-right:8px;}
@@ -304,6 +307,7 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
   </div>
   <div class="win-controls">
     <button class="win-btn" id="bSettings" title="Settings"><svg viewBox="0 0 12 12" width="12" height="12"><circle cx="6" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 0.8v1.7M6 9.5v1.7M0.8 6h1.7M9.5 6h1.7M2.2 2.2l1.2 1.2M8.6 8.6l1.2 1.2M9.8 2.2L8.6 3.4M3.4 8.6L2.2 9.8" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    <span class="win-sep"></span>
     <button class="win-btn" id="bMin"><svg viewBox="0 0 11 11"><line x1="0" y1="5.5" x2="11" y2="5.5" stroke="currentColor" stroke-width="1.1"/></svg></button>
     <button class="win-btn" id="bMax"><svg class="ic-max" viewBox="0 0 10 10" width="10" height="10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><svg class="ic-restore" viewBox="0 0 11 11" width="11" height="11"><path d="M3.5 1.5h6v6M8.5 3.5v-2h-2M1.5 9.5v-6h6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
     <button class="win-btn close" id="bClose"><svg viewBox="0 0 11 11"><line x1="0" y1="0" x2="11" y2="11" stroke="currentColor" stroke-width="1.1"/><line x1="11" y1="0" x2="0" y2="11" stroke="currentColor" stroke-width="1.1"/></svg></button>
@@ -1342,6 +1346,9 @@ function applyTheme(hex, save) {
   sheetEl.style.setProperty('--h', themeHue);
   document.querySelectorAll('.dock-btn').forEach(b => b.style.setProperty('--bh', themeHue));
   if (save) { try { localStorage.setItem('fb.theme', hex); } catch (e) {} }
+  // The panels' smoothed corners are painted natively from a capture of the
+  // page; re-reporting the (unchanged) rects makes the host recapture them.
+  if (save) reportOverlayRects();
 }
 themeEl.addEventListener('input', () => applyTheme(themeEl.value, true));
 try { const t = localStorage.getItem('fb.theme'); if (/^#[0-9a-f]{6}$/i.test(t || '')) { themeEl.value = t; applyTheme(t, false); } } catch (e) {}
