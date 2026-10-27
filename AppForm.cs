@@ -876,6 +876,204 @@ namespace ManikinApp
         }
     }
 
+    // EdgeOverlay: the anti-aliased rims of the rounded HTML panels (dock,
+    // sheet). Those panels show through 1-bit window-region holes in the
+    // Flash surface, which can only stair-step a curve. FlashCore cuts each
+    // hole to the fully covered pixels only; this click-through layered
+    // window paints the partly covered ones over the Flash scene with real
+    // per-pixel alpha, colored from the page's own rendering so gradients,
+    // borders and the theme accent all match.
+    public class EdgeOverlay : Form
+    {
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        struct BlendFunction
+        {
+            public byte BlendOp;
+            public byte BlendFlags;
+            public byte SourceConstantAlpha;
+            public byte AlphaFormat;
+        }
+
+        const int ULW_ALPHA = 2;
+        const byte AC_SRC_ALPHA = 1;
+        const int WS_EX_LAYERED = 0x80000;
+        const int WS_EX_TRANSPARENT = 0x20;
+        const int WS_EX_NOACTIVATE = 0x8000000;
+        const int WS_EX_TOOLWINDOW = 0x80;
+        const int WM_NCHITTEST = 0x84;
+        const int HTTRANSPARENT = -1;
+        const int Samples = 8; // per axis: 64 coverage levels per edge pixel
+
+        [DllImport("user32.dll")]
+        static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref Point pptDst, ref Size psize, IntPtr hdcSrc, ref Point pptSrc, int crKey, ref BlendFunction pblend, int dwFlags);
+        [DllImport("user32.dll")]
+        static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hDC);
+
+        // Top-left of the painted area in the owner's client coordinates,
+        // so a window move only has to re-place it.
+        public Point ClientOrigin { get; private set; }
+
+        public EdgeOverlay()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                return cp;
+            }
+        }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST) { m.Result = (IntPtr)HTTRANSPARENT; return; }
+            base.WndProc(ref m);
+        }
+
+        // panels: rounded rects in the owner's client coordinates (= page
+        // pixels). page: a capture of the page; scale maps page pixels to it.
+        // Returns false when there is nothing to paint.
+        public bool Render(List<Tuple<Rectangle, int>> panels, Bitmap page, double scale, Func<Point, Point> toScreen)
+        {
+            Rectangle bounds = Rectangle.Empty;
+            foreach (var p in panels)
+                if (p.Item2 > 0) bounds = bounds.IsEmpty ? p.Item1 : Rectangle.Union(bounds, p.Item1);
+            if (bounds.Width <= 0 || bounds.Height <= 0) return false;
+
+            var px = new int[bounds.Width * bounds.Height];
+            foreach (var p in panels)
+            {
+                var r = p.Item1;
+                int rad = FlashCore.CornerRadius(r, p.Item2);
+                if (rad <= 0) continue;
+                for (int j = 0; j < rad; j++)
+                {
+                    int inset = FlashCore.CornerInset(rad, j);
+                    for (int i = 0; i < inset; i++)
+                    {
+                        int cov = Coverage(rad, i, j);
+                        if (cov == 0) continue;
+                        // Color: the outermost fully covered page pixel on
+                        // the way in along the radius (the panel's border).
+                        Point s = InnerPixel(rad, i, j);
+                        for (int corner = 0; corner < 4; corner++)
+                        {
+                            bool right = corner == 1 || corner == 2, bottom = corner >= 2;
+                            int x = right ? r.Right - 1 - i : r.X + i;
+                            int y = bottom ? r.Bottom - 1 - j : r.Y + j;
+                            if (InsideOther(panels, p, x, y)) continue;
+                            int sx = right ? r.Right - 1 - s.X : r.X + s.X;
+                            int sy = bottom ? r.Bottom - 1 - s.Y : r.Y + s.Y;
+                            Color c = Sample(page, sx, sy, scale);
+                            int a = cov * 255 / (Samples * Samples);
+                            px[(y - bounds.Y) * bounds.Width + (x - bounds.X)] = (a << 24) | (c.R << 16) | (c.G << 8) | c.B;
+                        }
+                    }
+                }
+            }
+
+            ClientOrigin = bounds.Location;
+            using (var bmp = new Bitmap(bounds.Width, bounds.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+                try
+                {
+                    for (int row = 0; row < bmp.Height; row++)
+                        Marshal.Copy(px, row * bmp.Width, data.Scan0 + row * data.Stride, bmp.Width);
+                }
+                finally { bmp.UnlockBits(data); }
+                Bounds = new Rectangle(toScreen(bounds.Location), bounds.Size);
+                IntPtr screenDc = GetDC(IntPtr.Zero);
+                IntPtr memDc = CreateCompatibleDC(screenDc);
+                IntPtr hBmp = bmp.GetHbitmap(Color.FromArgb(0));
+                IntPtr oldBmp = SelectObject(memDc, hBmp);
+                try
+                {
+                    var pos = new Point(Left, Top);
+                    var size = new Size(Width, Height);
+                    var src = new Point(0, 0);
+                    var blend = new BlendFunction { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = AC_SRC_ALPHA };
+                    UpdateLayeredWindow(Handle, screenDc, ref pos, ref size, memDc, ref src, 0, ref blend, ULW_ALPHA);
+                }
+                finally
+                {
+                    SelectObject(memDc, oldBmp);
+                    DeleteObject(hBmp);
+                    DeleteDC(memDc);
+                    ReleaseDC(IntPtr.Zero, screenDc);
+                }
+            }
+            return true;
+        }
+
+        // Supersampled share of corner pixel (i, j) inside the arc, counted
+        // in the top-left corner (arc center at rad, rad); the other three
+        // corners are mirror images.
+        static int Coverage(int rad, int i, int j)
+        {
+            int n = 0;
+            double r2 = (double)rad * rad;
+            for (int sy = 0; sy < Samples; sy++)
+            {
+                double dy = rad - (j + (sy + 0.5) / Samples);
+                for (int sx = 0; sx < Samples; sx++)
+                {
+                    double dx = rad - (i + (sx + 0.5) / Samples);
+                    if (dx * dx + dy * dy <= r2) n++;
+                }
+            }
+            return n;
+        }
+
+        static Point InnerPixel(int rad, int i, int j)
+        {
+            double dx = i + 0.5 - rad, dy = j + 0.5 - rad;
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1e-6) return new Point(rad, rad);
+            dx /= len; dy /= len;
+            for (double d = rad - 0.5; d > 0; d -= 0.5)
+            {
+                int x = (int)Math.Floor(rad + dx * d), y = (int)Math.Floor(rad + dy * d);
+                if (x >= rad || y >= rad || x >= FlashCore.CornerInset(rad, y)) return new Point(x, y);
+            }
+            return new Point(rad, rad);
+        }
+
+        // Where two reported rects overlap (a resting and a live rect of the
+        // same panel), the other one's hole already shows the page there.
+        static bool InsideOther(List<Tuple<Rectangle, int>> panels, Tuple<Rectangle, int> self, int x, int y)
+        {
+            foreach (var p in panels)
+                if (!ReferenceEquals(p, self) && p.Item1.Contains(x, y)) return true;
+            return false;
+        }
+
+        static Color Sample(Bitmap page, int x, int y, double scale)
+        {
+            int sx = Math.Max(0, Math.Min(page.Width - 1, (int)(x * scale)));
+            int sy = Math.Max(0, Math.Min(page.Height - 1, (int)(y * scale)));
+            return page.GetPixel(sx, sy);
+        }
+    }
+
     // LoaderOverlay: minimal centered typing line for character names. The
     // middle of the preview is Flash territory so this is native, not HTML:
     // a borderless dark line with an accent underline. Enter commits the
@@ -993,6 +1191,8 @@ namespace ManikinApp
         CosmeticsOverlay _cos;
         LoaderOverlay _loader;
         CosmeticsOverlay _mag;
+        EdgeOverlay _edges;
+        bool _edgesBusy, _edgesAgain;
         readonly object _loadLock = new object();
         string _pendingLoad;
         volatile int _cosToggleSeq;
@@ -1125,6 +1325,7 @@ namespace ManikinApp
             try { if (_loader != null) _loader.Close(); } catch { }
             try { if (_mag != null) _mag.Close(); } catch { }
             try { if (_cos != null) _cos.Close(); } catch { }
+            try { if (_edges != null) _edges.Close(); } catch { }
             try { if (_flash != null) _flash.Dispose(); } catch { }
         }
 
@@ -1337,6 +1538,17 @@ namespace ManikinApp
 
             try
             {
+                _edges = new EdgeOverlay();
+                LocationChanged += (o, ev) => FollowEdges();
+            }
+            catch (Exception ex)
+            {
+                Dbg("Edge overlay init failed (continuing without it): " + ex);
+                _edges = null;
+            }
+
+            try
+            {
                 _watchdog = new System.Windows.Forms.Timer { Interval = 2000 };
                 _watchdog.Tick += (o, ev) =>
                 {
@@ -1365,6 +1577,7 @@ namespace ManikinApp
                             // picker vanished within ~2 s, on this tick).
                             RaiseNoActivate(_cos);
                             RaiseNoActivate(_mag);
+                            RaiseNoActivate(_edges);
                             // Typing-line guard: pull focus back when it was
                             // yanked elsewhere in our own windows (Flash boot
                             // does this). Never from another app, never from
@@ -2186,8 +2399,8 @@ namespace ManikinApp
             // every frame, so applying each one repaints the whole preview
             // dozens of times a second - that is the stutter. Hold the update
             // until the drag settles; EndResize applies the final one.
-            if (_resizing) { _holesDirty = true; return; }
-            if (_lastOverlayRectsFormCoords.Count == 0) { _flash.ClearOverlayHoles(); return; }
+            if (_resizing) { _holesDirty = true; RefreshEdges(); return; }
+            if (_lastOverlayRectsFormCoords.Count == 0) { _flash.ClearOverlayHoles(); RefreshEdges(); return; }
             var holes = new List<Tuple<Rectangle, int>>();
             foreach (var h in _lastOverlayRectsFormCoords)
             {
@@ -2196,6 +2409,98 @@ namespace ManikinApp
                 holes.Add(Tuple.Create(new Rectangle(r.X - _flash.Left, r.Y - _flash.Top, r.Width, r.Height), h.Item2));
             }
             _flash.SetOverlayHoles(holes);
+            RefreshEdges();
+        }
+
+        // ---- anti-aliased panel corners (EdgeOverlay) ----
+        // Colors come from a capture of the page, which is async. On every
+        // rect change the rims of panels that did not move are repainted at
+        // once from the last capture (gone or moved ones vanish with their
+        // hole), then a fresh capture repaints them all.
+        Bitmap _edgesPage;
+        double _edgesScale = 1;
+        List<Rectangle> _edgesCaptured = new List<Rectangle>();
+
+        List<Tuple<Rectangle, int>> EdgePanels()
+        {
+            var panels = new List<Tuple<Rectangle, int>>();
+            if (_resizing || _flash == null || !_flash.Visible) return panels;
+            foreach (var h in _lastOverlayRectsFormCoords)
+            {
+                bool wide = h.Item1.Width > 100; // same inference as GearRestX
+                if (h.Item2 > 0 && !(wide ? _lastSheetHidden : _lastDockHidden)) panels.Add(h);
+            }
+            return panels;
+        }
+
+        void PaintEdges(List<Tuple<Rectangle, int>> panels, Bitmap page, double scale)
+        {
+            try
+            {
+                if (panels.Count == 0 || page == null || !_edges.Render(panels, page, scale, p => PointToScreen(p))) { HideEdges(); return; }
+                if (!_edges.Visible)
+                {
+                    try { _edges.Show(this); } catch { try { _edges.Show(); } catch { } }
+                }
+            }
+            catch (Exception ex) { Dbg("PaintEdges EX: " + ex.Message); HideEdges(); }
+        }
+
+        void RefreshEdges()
+        {
+            if (_edges == null) return;
+            PaintEdges(EdgePanels().FindAll(p => _edgesCaptured.Contains(p.Item1)), _edgesPage, _edgesScale);
+            UpdateEdges();
+        }
+
+        void HideEdges()
+        {
+            try { if (_edges != null && _edges.Visible) _edges.Hide(); } catch { }
+        }
+
+        void FollowEdges()
+        {
+            try { if (_edges != null && _edges.Visible) _edges.Location = PointToScreen(_edges.ClientOrigin); } catch { }
+        }
+
+        // A burst of rect reports (theme wheel drag, tab switching) coalesces
+        // into one more pass once the running capture lands, always with the
+        // latest rects.
+        async void UpdateEdges()
+        {
+            if (_edges == null || _core == null) return;
+            if (_edgesBusy) { _edgesAgain = true; return; }
+            _edgesBusy = true;
+            try
+            {
+                do
+                {
+                    _edgesAgain = false;
+                    // The page reveals a panel right AFTER its hole is cut
+                    // (openTab): give that reveal a frame to paint first.
+                    await Task.Delay(50);
+                    var panels = EdgePanels();
+                    if (IsDisposed || panels.Count == 0) { HideEdges(); continue; }
+                    using (var ms = new MemoryStream())
+                    {
+                        await _core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, ms);
+                        if (_edgesAgain || IsDisposed) continue;
+                        ms.Position = 0;
+                        using (var png = new Bitmap(ms))
+                        {
+                            if (_edgesPage != null) _edgesPage.Dispose();
+                            _edgesPage = new Bitmap(png);
+                        }
+                    }
+                    _edgesScale = _web.ClientSize.Width > 0 ? _edgesPage.Width / (double)_web.ClientSize.Width : 1;
+                    panels = EdgePanels();
+                    _edgesCaptured = panels.ConvertAll(p => p.Item1);
+                    PaintEdges(panels, _edgesPage, _edgesScale);
+                }
+                while (_edgesAgain);
+            }
+            catch (Exception ex) { Dbg("UpdateEdges EX: " + ex.Message); }
+            finally { _edgesBusy = false; }
         }
         public void DoOverlayRects(string rectsJson, bool dockHidden, bool sheetHidden)
         {
@@ -2224,6 +2529,16 @@ namespace ManikinApp
                 !(dockHidden && sheetHidden))
             {
                 Dbg("OverlayRects: ignoring empty set (panels still up) - keeping " + _lastOverlayRectsFormCoords.Count);
+                return;
+            }
+            // Same rects again (the page re-reports them after a theme change so
+            // the corner rims get recolored): re-cutting an identical region
+            // only forces a full Flash repaint, once per color-wheel step.
+            if (!_holesDirty && dockHidden == _lastDockHidden && sheetHidden == _lastSheetHidden &&
+                rects.Count == _lastOverlayRectsFormCoords.Count &&
+                rects.TrueForAll(r => _lastOverlayRectsFormCoords.Exists(o => o.Item1 == r.Item1 && o.Item2 == r.Item2)))
+            {
+                UpdateEdges();
                 return;
             }
             _lastOverlayRectsFormCoords = rects;
