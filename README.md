@@ -12,6 +12,7 @@ game's backgrounds, at whatever size you want to check it at.
 | | |
 |---|---|
 | **Character** | Load any existing character by name, or drop your own item SWFs onto the gear slots |
+| **Wardrobe** | Search ~50,000 catalog items by slot, filter Free / Member / AC, and try them on (Keep or Revert) |
 | **Backgrounds** | All game scenes plus a custom solid colour and hex input |
 | **Size** | Independent scale for character, pet and background |
 | **Dyes** | Full HSV picker for the six dye channels, plus a theme colour for the app itself |

@@ -287,6 +287,57 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .dock.hidden{opacity:0;pointer-events:none;}
 @keyframes panelIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 .sheet .panel.active{animation:panelIn .24s cubic-bezier(.2,.8,.2,1) both;}
+/* Wardrobe panel: catalog search, slot icons, access filter, item list and
+   the try-on card. Taller than the other panels so the list has room. */
+.sheet.wardrobe{height:min(640px,calc(100% - 16px));}
+.wd-slots{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;flex-shrink:0;}
+.wd-slot{height:34px;border-radius:11px;background:#141725;border:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.wd-slot img{width:20px;height:20px;object-fit:contain;}
+.wd-slot:hover{background:#232742;border-color:rgba(255,255,255,.14);}
+.wd-slot.on{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border-color:transparent;box-shadow:inset 0 1px 0 rgba(255,255,255,.3);}
+.wd-access{flex-shrink:0;}
+.wd-count{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:8px 2px 4px;font-size:10.5px;font-weight:600;color:color-mix(in srgb,var(--accent-1) 35%,#a3a9c0);flex-shrink:0;}
+.wd-count #wdCount{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-count.err #wdCount{color:var(--accent-1);}
+.wd-tools{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+.wd-gender{display:flex;gap:1px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:2px;}
+.wd-g{width:20px;height:18px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#8b91a8;cursor:pointer;user-select:none;}
+.wd-g:hover{color:#fff;}
+.wd-g.on{background:color-mix(in srgb,var(--accent-3) 50%,#1a1d2e);color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4);}
+.wd-gender.busy{opacity:.5;pointer-events:none;}
+.wd-info{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#141725;border:1px solid rgba(255,255,255,.08);color:#8b91a8;font:italic 700 12px/1 Georgia,'Times New Roman',serif;cursor:pointer;user-select:none;}
+.wd-info:hover{color:#fff;border-color:rgba(255,255,255,.2);}
+.wd-info.on{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border-color:transparent;color:#fff;}
+.wd-card.slim{flex-direction:row;align-items:center;gap:6px;padding:6px 6px 6px 11px;border-radius:13px;}
+.wd-card.slim .t{flex:1;min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-card.slim .action-btn{height:24px;padding:0 9px;font-size:10px;border-radius:9px;flex:none;}
+.wd-card.slim .action-btn.primary{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border:none;color:#fff;}
+.wd-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin:0 -4px;padding:0 4px;}
+.wd-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:11px;border:1px solid transparent;cursor:pointer;flex-shrink:0;}
+.wd-row:hover{background:#171a29;border-color:rgba(255,255,255,.08);}
+.wd-row.try{background:color-mix(in srgb,var(--accent-3) 22%,#0E1018);border-color:var(--accent-1);}
+.wd-row.worn{background:#141725;border-color:rgba(255,255,255,.12);}
+.wd-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.wd-n{font-size:11.5px;font-weight:600;color:#E7EAF2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-s{font-size:10px;color:#7C8399;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;}
+.wd-st{font-size:9px;font-weight:700;letter-spacing:.3px;color:color-mix(in srgb,var(--accent-1) 70%,#fff);white-space:nowrap;}
+.wd-tags{display:flex;gap:3px;}
+.wd-tag{font-size:9px;font-weight:700;border-radius:5px;padding:1px 4px;}
+.wd-tag.m{color:#F2C46D;background:#2a2414;}
+.wd-tag.ac{color:#8CCBFF;background:#142233;}
+.wd-more{font-size:10px;color:#7C8399;text-align:center;padding:8px 4px;flex-shrink:0;line-height:1.4;}
+.wd-card{flex-shrink:0;margin-top:8px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:10px 11px;display:flex;flex-direction:column;gap:5px;}
+.wd-card[hidden]{display:none;}
+.wd-card .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
+.wd-card .t{font-size:12.5px;font-weight:700;color:#fff;line-height:1.25;}
+.wd-card .wd-st{margin-top:2px;}
+.wd-card .k{font-size:10px;color:#8b91a8;line-height:1.35;}
+.wd-card code{font-family:Consolas,monospace;font-size:9.5px;color:#7C8399;overflow-wrap:anywhere;line-height:1.35;}
+.wd-btns{display:flex;gap:6px;margin-top:3px;}
+.wd-btns .action-btn{flex:1;}
+.wd-btns .action-btn.primary{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border:none;color:#fff;}
+.wd-btns .action-btn.primary:hover{filter:brightness(1.1);}
 @media (max-height:560px){
   .dock-btn{width:28px;height:28px;}
   .dock{padding:3px;}
@@ -336,6 +387,25 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
     <div class="sheet-inner">
       <div class="panel active" id="p-monitor">
         <div class="monitor" id="monitor">No character loaded yet.</div>
+      </div>
+      <div class="panel" id="p-wardrobe">
+        <input type="text" id="wdSearch" class="mini-search" placeholder="Search items…" aria-label="Search items" spellcheck="false">
+        <div class="wd-slots" id="wdSlots"></div>
+        <div class="preset-row wd-access" id="wdAccess">
+          <div class="preset-chip on" data-a="all">All</div>
+          <div class="preset-chip" data-a="free">Free</div>
+          <div class="preset-chip" data-a="member">Member</div>
+          <div class="preset-chip" data-a="ac">AC</div>
+        </div>
+        <div class="wd-count" id="wdCountRow">
+          <span id="wdCount"></span>
+          <div class="wd-tools">
+            <div class="wd-gender" id="wdGender" title="Body type"><div class="wd-g" data-g="M">M</div><div class="wd-g" data-g="F">F</div></div>
+            <div class="wd-info" id="wdInfo" title="Show item details" role="button" aria-label="Show item details">i</div>
+          </div>
+        </div>
+        <div class="wd-list" id="wdList"></div>
+        <div class="wd-card" id="wdCard" hidden></div>
       </div>
       <div class="panel" id="p-backgrounds">
         <input type="text" id="bgSearch" class="mini-search" placeholder="Search scenes…">
@@ -414,6 +484,9 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
     <button class="dock-btn active" data-t="monitor" title="Monitor">
       <svg viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="8.5" rx="1.2"/><path d="M4 6.5l2 2.5 1.5-3 1.5 2 2-3.5"/><path d="M6 14h4M8 11.5V14"/></svg>
     </button>
+    <button class="dock-btn" data-t="wardrobe" title="Wardrobe">
+      <svg viewBox="0 0 16 16"><path d="M6.5 4.2a1.5 1.5 0 1 1 1.5 1.5c-.5 0-.9.4-.9.9v.9"/><path d="M7.1 7.5L1.8 11.3c-.6.4-.3 1.2.4 1.2h11.6c.7 0 1-.8.4-1.2L8.9 7.5"/></svg>
+    </button>
     <button class="dock-btn" data-t="backgrounds" title="Background">
       <svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.2"/><circle cx="5.3" cy="6" r="1.2"/><path d="M2 12l3.8-4 2.7 2.8L11 8l3 4"/></svg>
     </button>
@@ -466,6 +539,8 @@ function post(method, args) {
       case '__jsLog': return __fb.jsLog(JSON.stringify(args || {})).then(() => null);
       case 'loadChar': return __fb.beginLoadChar(args.name).then(awaitJob);
       case 'downloadAll': return __fb.beginDownloadAll(JSON.stringify(args.vars), args.dir).then(awaitJob);
+      case 'wardrobeQuery': return __fb.wardrobeQuery(args.slot, args.q || '', args.access || 'all', args.offset || 0, args.limit || 200);
+      case 'wardrobeFetch': return __fb.beginWardrobeFetch(args.slot, args.file, args.gender || 'F', args.dir || '').then(awaitJob);
       case 'gearClicks': return __fb.takeGearClicks();
       case 'copyLog': return __fb.copyLog();
       case 'pickFolder': return __fb.pickFolder();
@@ -503,7 +578,9 @@ function __makeMockHost() {
     startResize: () => ok(), isMaximized: () => ok(false), setOverlaysHidden: () => ok(),
     pickFolder: () => ok(''), getAppDir: () => ok(''),
     getLog: () => ok('(preview mode \u2013 no host log)'), clearLog: () => ok(),
-    saveFile: () => ok(), openFile: () => ok()
+    saveFile: () => ok(), openFile: () => ok(),
+    wardrobeQuery: () => ok(JSON.stringify({ ok: false, error: 'Preview mode – no catalog.', items: [], total: 0, inSlot: 0 })),
+    beginWardrobeFetch: () => ok('mock-wd')
   };
 }
 const __fb = (window.chrome && window.chrome.webview && window.chrome.webview.hostObjects && window.chrome.webview.hostObjects.fbhost) || __makeMockHost();
@@ -586,7 +663,8 @@ function renderGear() {
   // as SWF drop targets). Posting [] here would hide the rail permanently -
   // the host hides the window AND marks it row-less, so no later unhide can
   // bring it back, which is what left it stuck off after Hide UI.
-  if (!project.name) {
+  // (Items tried on from the Wardrobe count as loaded, character or not.)
+  if (!project.name && !GEAR_ORDER.some(t => { const s = activeEntry(t); return s && s.path; })) {
     rows.forEach(r => { r.name = ''; r.dim = true; });
     post('gear', { rows: JSON.stringify(rows) });
     pushCosmetics();
@@ -669,18 +747,24 @@ async function runSendHost() {
     const s = activeEntry(t);
     if (s && s.enabled && s.path) {
       await showSlot(t);
-      const msg = { ItemType: t, ItemFile: s.path, Link: s.link || '' };
-      if (t === 'Weapon' && project.vars) {
-        const isCos = project.cosmeticsOn && project.cosmetics['Weapon'] && s === project.cosmetics['Weapon'];
-        msg.WeaponType = isCos ? (project.vars['strCustWeaponType'] || '') : (project.vars['strWeaponType'] || '');
-      }
-      await post('loadItem', msg);
+      await post('loadItem', slotMsg(t, s));
     } else if (__everLoaded) {
       await clearSlot(t);
     }
   }
   if (some) __everLoaded = true;
   await applyExtraState();
+}
+// loadItem message for a slot entry. Wardrobe entries carry their own weapon
+// type (wtype); CharPage ones take it from the character's FlashVars.
+function slotMsg(t, s) {
+  const msg = { ItemType: t, ItemFile: s.path, Link: s.link || '' };
+  if (t === 'Weapon' && s.wtype != null) msg.WeaponType = s.wtype;
+  else if (t === 'Weapon' && project.vars) {
+    const isCos = project.cosmeticsOn && project.cosmetics['Weapon'] && s === project.cosmetics['Weapon'];
+    msg.WeaponType = isCos ? (project.vars['strCustWeaponType'] || '') : (project.vars['strWeaponType'] || '');
+  }
+  return msg;
 }
 async function slotFlag(t, hide) {
   const v = hide ? 'True' : 'False';
@@ -734,7 +818,7 @@ function sendBackground() {
   updateTitleBar();
 }
 
-const BG_SCENES = ['Chaos', 'ClubHouse', 'Frostvale', 'Hill', 'Mystcroft', 'Shadowscythe', 'Yulgar',
+const BG_SCENES = ['Gradient', 'Chaos', 'ClubHouse', 'Frostvale', 'Hill', 'Mystcroft', 'Shadowscythe', 'Yulgar',
   'cp-doomwood', 'cp-ledgermayne', 'cp-lightguard', 'cp-northernlights', 'cp-sandsea', 'cp-shadowfall', 'cp-skyguard', 'cp-void', 'cp-yulgar', 'cp-mogloween',
   'CP-Frostvale', 'CP-Love', 'cp-battleon2', 'cp-chaos', 'cp-river', 'cp-whitemap', 'CP-Underworld2r1',
   'cp-bg18', 'cp-bg19', 'cp-bg20', 'cp-bg21', 'cp-bg22', 'cp-bg23', 'cp-bg24', 'cp-bg25', 'cp-bg26', 'cp-bg27', 'cp-bg28', 'cp-bg29', 'cp-bg30',
@@ -854,10 +938,10 @@ setTimeout(() => {
 let activeTab = 'monitor';
 const sheetEl = document.getElementById('sheet');
 const sheetTitleEl = document.getElementById('sheetTitle');
-const TAB_TITLES = { monitor: 'Monitor', backgrounds: 'Background', emotes: 'Emotes', names: 'Settings', colors: 'Color Custom', misc: 'Visibility', log: 'Log' };
+const TAB_TITLES = { monitor: 'Monitor', wardrobe: 'Wardrobe', backgrounds: 'Background', emotes: 'Emotes', names: 'Settings', colors: 'Color Custom', misc: 'Visibility', log: 'Log' };
 let themeHue = 352;
-const TAB_HUES = { monitor: 352, backgrounds: 352, emotes: 352, names: 352, colors: 352, misc: 352, log: 352 };
-const TAB_SUBS = { monitor: 'Character data', backgrounds: 'Pick a scene', emotes: 'Play an animation', names: 'Names, window & output', colors: 'Colors, theme & scale', misc: 'Visibility & output', log: 'Debug output' };
+const TAB_HUES = { monitor: 352, wardrobe: 352, backgrounds: 352, emotes: 352, names: 352, colors: 352, misc: 352, log: 352 };
+const TAB_SUBS = { monitor: 'Character data', wardrobe: 'Try on catalog items', backgrounds: 'Pick a scene', emotes: 'Play an animation', names: 'Names, window & output', colors: 'Colors, theme & scale', misc: 'Visibility & output', log: 'Debug output' };
 const TALL_TABS = ['backgrounds', 'emotes', 'monitor', 'log'];
 let uiLockUntil = 0;
 function uiLocked() { try { return !window.__noUiLock && performance.now() < uiLockUntil; } catch (e) { return false; } }
@@ -877,12 +961,14 @@ async function openTab(name) {
   document.querySelectorAll('.sheet .panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
   sheetEl.classList.toggle('tall', TALL_TABS.indexOf(name) >= 0);
   sheetEl.classList.toggle('wide', name === 'names');
+  sheetEl.classList.toggle('wardrobe', name === 'wardrobe');
   // Cut the hole BEFORE revealing, so the panel is never briefly painted over
   // solid Flash. The frame is at rest, so this rect is exact and stays valid.
   try { await post('overlayRects', { rects: computeOverlayRects({ sheet: !wasOpen }) }); } catch (e) {}
   // .open is what makes the panel visible at all (opacity/visibility).
   sheetEl.classList.add('open');
   if (name === 'log') startSideLog(); else stopSideLog();
+  if (name === 'wardrobe') wdQuery();
 }
 async function closeSheet() {
   if (uiLocked()) return;
@@ -1033,6 +1119,7 @@ async function applyVars(name, vars, dir) {
   project.slots = {};
   project.cosmetics = {};
   project.cosmeticsOn = false;
+  wdReset();
   renderGear();
   monitorEl.textContent = formatVars(vars);
   setStatus('Downloading item SWFs to ' + dir + '...');
@@ -1421,6 +1508,305 @@ document.getElementById('hideUI').onchange = e => {
   project.hideUI = e.target.checked;
   updateUIVisibility();
 };
+
+/* ---- Wardrobe: browse the catalog (catalog\wardrobe.json, searched by the
+   host) and try items on. A tried item goes straight into the slot entry, so
+   the gear rail, names and later reloads all see it; Revert restores the
+   entry it replaced, Keep just forgets that entry. One trial at a time:
+   trying something in another slot reverts the open trial first. */
+const WD_SLOTS = [['Helm', 'helm', 'helms'], ['Armor', 'armor', 'armors'], ['Cape', 'cape', 'capes'],
+  ['Weapon', 'weapon', 'weapons'], ['Pet', 'pet', 'pets'], ['Misc', 'misc', 'ground runes']];
+const WD_PAGE = 200;
+const wd = { slot: 'Helm', q: '', access: 'all', res: null, more: false, trial: null, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false };
+try { wd.details = localStorage.getItem('fb.wdDetails') === '1'; } catch (e) {}
+
+function wdEl(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function wdBtn(label, cls, fn) {
+  const b = wdEl('button', 'action-btn' + (cls ? ' ' + cls : ''), label);
+  b.type = 'button';
+  b.onclick = fn;
+  return b;
+}
+// The entry/name maps a slot currently shows (the cosmetic set when that is on).
+function wdSet(t) {
+  return (project.cosmeticsOn && COSMETIC_TYPES.indexOf(t) >= 0 && project.cosmetics[t])
+    ? { entries: project.cosmetics, names: project.gearCos } : { entries: project.slots, names: project.gear };
+}
+// Comparable file key: CharPage entries are cache paths (items\helms\X.swf,
+// classes\F\X.swf), catalog rows CDN paths (armor: the bare name).
+function wdNorm(t, f) {
+  f = String(f || '').toLowerCase().replace(/\\/g, '/');
+  return t === 'Armor' ? f.split('/').pop() : f;
+}
+function wdWorn(t) { const s = activeEntry(t); return s && s.path ? wdNorm(t, s.file) : ''; }
+function wdReset() { wd.trial = null; wd.info = {}; wd.busy = ''; wd.err = ''; if (activeTab === 'wardrobe') wdRender(); }
+
+// The list holds every match: the first page comes with the query, the rest
+// is fetched a page at a time as the list scrolls near its end.
+async function wdQuery() {
+  const seq = ++wd.seq;
+  let r = null;
+  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: 0, limit: WD_PAGE })); } catch (e) {}
+  if (seq !== wd.seq) return;
+  wd.res = r && r.ok ? r : { ok: false, error: (r && r.error) || 'Catalog not available.', items: [], total: 0, inSlot: 0 };
+  wd.more = false;
+  document.getElementById('wdList').textContent = '';
+  wdAppendRows(wd.res.items);
+  wdRender();
+}
+
+async function wdMore() {
+  const r = wd.res, seq = wd.seq;
+  if (wd.more || !r || r.ok === false || r.items.length >= r.total) return;
+  wd.more = true;
+  let p = null;
+  try { p = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: r.items.length, limit: WD_PAGE })); } catch (e) {}
+  wd.more = false;
+  if (seq !== wd.seq || !p || !p.ok || !p.items.length) return;
+  r.items.push(...p.items);
+  wdAppendRows(p.items);
+  wdMarkRows();
+  wdFill();
+}
+function wdFill() {
+  const l = document.getElementById('wdList');
+  if (l.scrollTop + l.clientHeight > l.scrollHeight - 400) wdMore();
+}
+
+function wdRowEl(it) {
+  const row = wdEl('div', 'wd-row');
+  row.title = it.n;
+  row._f = wdNorm(wd.slot, it.f);
+  const txt = wdEl('div', 'wd-txt');
+  txt.appendChild(wdEl('div', 'wd-n', it.n));
+  const bits = [];
+  if (it.w) bits.push(it.w);
+  bits.push(it.r || 'No rarity');
+  if (it.alt.length) bits.push('+' + it.alt.length + (it.alt.length === 1 ? ' name' : ' names'));
+  txt.appendChild(wdEl('div', 'wd-s', bits.join(' · ')));
+  const side = wdEl('div', 'wd-side');
+  row._st = side.appendChild(wdEl('div', 'wd-st'));
+  row._st.hidden = true;
+  const tags = wdEl('div', 'wd-tags');
+  if (it.m) tags.appendChild(wdEl('span', 'wd-tag m', 'M'));
+  if (it.ac) tags.appendChild(wdEl('span', 'wd-tag ac', 'AC'));
+  side.appendChild(tags);
+  row.appendChild(txt);
+  row.appendChild(side);
+  row.onclick = () => wdTry(it);
+  return row;
+}
+function wdAppendRows(items) {
+  const list = document.getElementById('wdList');
+  const old = document.getElementById('wdFoot');
+  if (old) old.remove();
+  const frag = document.createDocumentFragment();
+  items.forEach(it => frag.appendChild(wdRowEl(it)));
+  list.appendChild(frag);
+  const r = wd.res;
+  const foot = r.items.length < r.total ? 'Loading more…' : (!r.items.length && r.ok !== false ? 'No items match.' : '');
+  if (foot) { const d = wdEl('div', 'wd-more', foot); d.id = 'wdFoot'; list.appendChild(d); }
+}
+// Try-on / wearing / loading marks, updated in place (no list rebuild).
+function wdMarkRows() {
+  const worn = wdWorn(wd.slot), trying = !!(wd.trial && wd.trial.type === wd.slot);
+  document.querySelectorAll('#wdList .wd-row').forEach(row => {
+    const on = row._f === worn;
+    row.classList.toggle('try', on && trying);
+    row.classList.toggle('worn', on && !trying);
+    const st = wd.busy === row._f ? 'LOADING' : on ? (trying ? 'TRYING' : 'WEARING') : '';
+    row._st.textContent = st;
+    row._st.hidden = !st;
+  });
+}
+
+function wdRender() {
+  const meta = WD_SLOTS.find(s => s[0] === wd.slot);
+  document.querySelectorAll('#wdSlots .wd-slot').forEach(b => b.classList.toggle('on', b.dataset.slot === wd.slot));
+  document.querySelectorAll('#wdAccess .preset-chip').forEach(b => b.classList.toggle('on', b.dataset.a === wd.access));
+  document.querySelectorAll('#wdGender .wd-g').forEach(b => b.classList.toggle('on', b.dataset.g === (project.gender || 'F')));
+  document.getElementById('wdGender').classList.toggle('busy', wd.busy === 'gender');
+  const info = document.getElementById('wdInfo');
+  info.classList.toggle('on', wd.details);
+  info.title = wd.details ? 'Hide item details' : 'Show item details';
+  const r = wd.res || { ok: true, items: [], total: 0, inSlot: 0 };
+  const inSlot = (r.inSlot || 0).toLocaleString('en-US') + ' ' + meta[2];
+  if (activeTab === 'wardrobe') { const sub = document.getElementById('sheetSub'); if (sub) sub.textContent = inSlot; }
+  const filtered = wd.q.trim() || wd.access !== 'all';
+  const msg = wd.err || (r.ok === false ? r.error : '');
+  document.getElementById('wdCountRow').classList.toggle('err', !!msg);
+  document.getElementById('wdCount').textContent = msg || (filtered ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot);
+  wdMarkRows();
+  wdRenderCard();
+}
+
+function wdRenderCard() {
+  const card = document.getElementById('wdCard');
+  card.textContent = '';
+  const t = wd.slot;
+  const trial = wd.trial && wd.trial.type === t ? wd.trial : null;
+  const s = activeEntry(t);
+  if (!trial && !(s && s.path)) { card.hidden = true; return; }
+  card.hidden = false;
+  const kept = wd.info[t];
+  const it = trial ? trial.item : (kept && wdNorm(t, kept.f) === wdWorn(t) ? kept : null);
+  // Default: one slim row with the actions. The "i" button opens the full card.
+  card.classList.toggle('slim', !wd.details);
+  if (!wd.details) {
+    const nm = it ? it.n : (wdSet(t).names[t] || 'Current item');
+    const tt = wdEl('div', 't', nm);
+    tt.title = nm;
+    card.appendChild(tt);
+    if (trial) { card.appendChild(wdBtn('Revert', '', wdRevert)); card.appendChild(wdBtn('Keep', 'primary', wdKeep)); }
+    else card.appendChild(wdBtn('Take off', '', wdTakeOff));
+    return;
+  }
+  const hd = wdEl('div', 'hd');
+  hd.appendChild(wdEl('div', 't', it ? it.n : (wdSet(t).names[t] || 'Current item')));
+  hd.appendChild(wdEl('div', 'wd-st', trial ? 'TRYING ON' : 'WEARING'));
+  card.appendChild(hd);
+  if (it) {
+    if (it.alt.length)
+      card.appendChild(wdEl('div', 'k', 'Same art: ' + it.alt.slice(0, 6).join(', ') + (it.alt.length > 6 ? ' +' + (it.alt.length - 6) + ' more' : '')));
+    card.appendChild(wdEl('div', 'k', [it.w, it.r || 'No rarity', it.m ? 'Member' : 'Free', it.ac ? 'AC' : 'Gold'].filter(Boolean).join(' · ')));
+    card.appendChild(wdEl('div', 'k', it.where ? 'From ' + it.where : 'Source unknown'));
+  }
+  card.appendChild(wdEl('code', '', String((s && s.file) || '').replace(/\\/g, '/')));
+  const btns = wdEl('div', 'wd-btns');
+  if (trial) { btns.appendChild(wdBtn('Revert', '', wdRevert)); btns.appendChild(wdBtn('Keep', 'primary', wdKeep)); }
+  else btns.appendChild(wdBtn('Take off', '', wdTakeOff));
+  card.appendChild(btns);
+}
+
+// Re-show one slot after its entry changed. Before the first full load the
+// player still needs the isReady wait and gender, which sendHost does.
+async function wdApply(t) {
+  renderGear();
+  wdRender();
+  if (!__everLoaded) { await sendHost(); return; }
+  const s = activeEntry(t);
+  if (s && s.enabled && s.path) { await showSlot(t); await post('loadItem', slotMsg(t, s)); }
+  else await clearSlot(t);
+}
+
+async function wdTry(it) {
+  const t = wd.slot, f = wdNorm(t, it.f);
+  if (wd.busy || f === wdWorn(t)) return;
+  wd.busy = f;
+  wd.err = '';
+  wdRender();
+  const res = await post('wardrobeFetch', { slot: t, file: it.f, gender: project.gender || 'F', dir: await wdDir() });
+  wd.busy = '';
+  if (!res || !res.ok) {
+    wd.err = (res && (res.error || res.__postError)) || 'Download failed.';
+    wdRender();
+    return;
+  }
+  if (wd.trial && wd.trial.type !== t) await wdRevert();
+  const set = wdSet(t);
+  if (!wd.trial) wd.trial = { type: t, set, prev: set.entries[t], prevName: set.names[t] };
+  wd.trial.item = it;
+  wd.trial.set.entries[t] = { file: res.file, path: res.path, link: it.link || '', enabled: true, wtype: it.w || '' };
+  wd.trial.set.names[t] = it.n;
+  await wdApply(t);
+}
+
+async function wdRevert() {
+  const tr = wd.trial;
+  if (!tr) return;
+  wd.trial = null;
+  if (tr.prev) tr.set.entries[tr.type] = tr.prev; else delete tr.set.entries[tr.type];
+  if (tr.prevName) tr.set.names[tr.type] = tr.prevName; else delete tr.set.names[tr.type];
+  await wdApply(tr.type);
+}
+
+function wdKeep() {
+  if (!wd.trial) return;
+  wd.info[wd.trial.type] = wd.trial.item;
+  wd.trial = null;
+  renderGear();
+  wdRender();
+}
+
+async function wdTakeOff() {
+  const t = wd.slot, set = wdSet(t);
+  if (wd.trial && wd.trial.type === t) wd.trial = null;
+  delete set.entries[t];
+  delete set.names[t];
+  delete wd.info[t];
+  await wdApply(t);
+}
+
+// SWF cache folder: the output folder from Settings, else <app>\swf.
+async function wdDir() {
+  let dir = document.getElementById('folder').value.trim();
+  if (!dir) { dir = await post('getAppDir'); dir = dir ? dir + '\\swf' : dir; document.getElementById('folder').value = dir || ''; }
+  return dir;
+}
+
+// Body type switch. Armor and hair art is per gender (classes/M|F/,
+// hair/M|F/), so those entries are fetched again for the new gender; one with
+// no version for it stays as it is. Everything else is shared.
+async function wdSetGender(g) {
+  if (wd.busy || g === (project.gender || 'F')) return;
+  wd.busy = 'gender';
+  wd.err = '';
+  wdRender();
+  const dir = await wdDir(), missing = [];
+  const swap = async (t, e) => {
+    if (!e || !e.path) return e;
+    const m = String(e.file || '').replace(/\\/g, '/').match(t === 'Armor' ? /^classes\/[MF]\/(.+)$/i : /^hair\/[MF]\/(.+)$/i);
+    if (!m) return e;
+    const res = await post('wardrobeFetch', { slot: t, file: t === 'Armor' ? m[1] : 'hair/' + g + '/' + m[1], gender: g, dir });
+    if (!res || !res.ok) { missing.push(t); return e; }
+    return Object.assign({}, e, { file: res.file, path: res.path });
+  };
+  for (const set of [project.slots, project.cosmetics])
+    for (const t of ['Armor', 'Hair']) if (set[t]) set[t] = await swap(t, set[t]);
+  if (wd.trial && wd.trial.type === 'Armor') wd.trial.prev = await swap('Armor', wd.trial.prev);
+  project.gender = g;
+  wd.busy = '';
+  if (missing.length) wd.err = 'No ' + (g === 'M' ? 'male' : 'female') + ' version of the ' + [...new Set(missing)].join(' or ').toLowerCase() + '; kept it.';
+  await post('flashCall', { method: 'setGender', params: [g] });
+  renderGear();
+  wdRender();
+  await sendHost();
+}
+
+(function buildWardrobe() {
+  const slots = document.getElementById('wdSlots');
+  WD_SLOTS.forEach(([t, icon]) => {
+    const b = wdEl('div', 'wd-slot');
+    b.dataset.slot = t;
+    b.title = t === 'Misc' ? 'Ground' : t;
+    const img = document.createElement('img');
+    img.src = 'icons/' + icon + '.png';
+    img.alt = '';
+    b.appendChild(img);
+    b.onclick = () => { if (wd.slot === t) return; wd.slot = t; wd.err = ''; document.getElementById('wdList').scrollTop = 0; wdQuery(); };
+    slots.appendChild(b);
+  });
+  document.querySelectorAll('#wdAccess .preset-chip').forEach(c => {
+    c.onclick = () => { wd.access = c.dataset.a; document.getElementById('wdList').scrollTop = 0; wdQuery(); };
+  });
+  document.getElementById('wdList').addEventListener('scroll', wdFill);
+  document.querySelectorAll('#wdGender .wd-g').forEach(b => { b.onclick = () => wdSetGender(b.dataset.g); });
+  document.getElementById('wdInfo').onclick = () => {
+    wd.details = !wd.details;
+    try { localStorage.setItem('fb.wdDetails', wd.details ? '1' : '0'); } catch (e) {}
+    wdRender();
+  };
+  document.getElementById('wdSearch').addEventListener('input', e => {
+    wd.q = e.target.value;
+    clearTimeout(wd.qTimer);
+    wd.qTimer = setTimeout(() => { document.getElementById('wdList').scrollTop = 0; wdQuery(); }, 120);
+  });
+})();
 
 reportRect();
 post('getAppDir').then(d => { if (d && !document.getElementById('folder').value) document.getElementById('folder').value = d + '\\swf'; });

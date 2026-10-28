@@ -212,6 +212,12 @@ namespace ManikinApp
                 T("ui_layout_no_clipping", false, UiLayout),
                 T("ui_title_bar_color_option", false, UiTitleBar),
                 T("ui_empty_background", false, UiEmptyBackground),
+                T("ui_gradient_background", false, UiGradientBackground),
+                T("ui_wardrobe_catalog", false, UiWardrobeCatalog),
+                T("live_wardrobe_try_on", true, LiveWardrobeTryOn),
+                T("dagger_offhand_follows_unarmed", true, DaggerOffhandFollowsUnarmed),
+                T("ui_wardrobe_details_toggle", false, UiWardrobeDetails),
+                T("live_wardrobe_gender_switch", true, LiveWardrobeGender),
                 T("ui_monitor_no_side_scroll", false, UiMonitorScroll),
                 T("ui_names_follow_outfit", true, UiNamesFollowOutfit),
                 T("name_tag_over_avatar", true, NameTagOverAvatar),
@@ -1027,6 +1033,170 @@ namespace ManikinApp
             await Js("setBgColor('#0a0c14')");
         }
 
+        // Gradient scene (flash\Gradient.swf, built from tools\bg\Gradient.as):
+        // listed like any scene, and paints the navy glow - dark at the top,
+        // lighter and bluer at the bottom centre. The corner alone can't tell
+        // it from the default color (both #0A0C14), so compare the two.
+        async Task UiGradientBackground()
+        {
+            await Js("setBgColor('#0a0c14')");
+            bool listed = JsonConvert.DeserializeObject<bool>(await Js("[...document.querySelectorAll('#bgGrid .bg-pick')].some(b => b.textContent === 'Gradient')"));
+            Expect(listed, "Gradient is not in the scene list");
+            await Js("project.bgScene='Gradient';sendBackground();");
+            await Task.Delay(700);
+            using (var b = Flash.Snapshot())
+            {
+                b.Save(Path.Combine(_snapDir, "bg_gradient.png"), ImageFormat.Png);
+                Color top = b.GetPixel(4, 4), low = b.GetPixel(b.Width / 2, b.Height - 4);
+                Expect(top.R < 20 && top.G < 22 && top.B < 30, "top corner should be near #0A0C14, got " + top);
+                Expect(low.B > top.B + 25 && low.B > low.R, "bottom centre should glow navy, got " + low + " (top " + top + ")");
+            }
+            await Js("project.bgScene='';sendBackground();");
+        }
+
+        // Wardrobe panel (catalog\wardrobe.json): per-slot search, the four
+        // access filters, cleaned CDN paths, and the 200-row cap.
+        async Task<JObject> WardrobeQuery(string slot, string text, string access)
+        {
+            await JsAwait("(wd.slot=" + JsonConvert.ToString(slot) + ", wd.q=" + JsonConvert.ToString(text)
+                + ", wd.access=" + JsonConvert.ToString(access) + ", wdQuery())");
+            return JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(wd.res)")));
+        }
+
+        static bool HasItem(JObject res, string name) { return res["items"].Any(i => (string)i["n"] == name); }
+
+        async Task UiWardrobeCatalog()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('wardrobe')");
+            var all = await WardrobeQuery("Helm", "leprechaun hat", "all");
+            Expect((bool)all["ok"], "catalog query failed: " + all["error"]);
+            Expect((int)all["inSlot"] > 10000, "helm count " + all["inSlot"]);
+            Expect(HasItem(all, "Leprechaun Hat"), "search 'leprechaun hat' missed Leprechaun Hat");
+            Expect(!HasItem(await WardrobeQuery("Helm", "leprechaun hat", "ac"), "Leprechaun Hat"), "AC filter kept a gold item");
+            Expect(HasItem(await WardrobeQuery("Helm", "leprechaun hat", "free"), "Leprechaun Hat"), "Free filter dropped a free item");
+            Expect(!HasItem(await WardrobeQuery("Helm", "leprechaun hat", "member"), "Leprechaun Hat"), "Member filter kept a free item");
+            var dk = await WardrobeQuery("Armor", "legion doomknight", "all");
+            Expect(dk["items"].Any(i => (string)i["f"] == "LegionDoomKnightr3.swf"), "Legion DoomKnight path missing or not cleaned: " + dk["items"].ToString(Formatting.None));
+            // Paging: a page per query, more pages as the list scrolls, until
+            // every match is listed once.
+            Func<Task<int>> rowCount = async () => JsonConvert.DeserializeObject<int>(await Js("document.querySelectorAll('#wdList .wd-row').length"));
+            Func<Task> scrollEnd = async () => { await Js("(l => { l.scrollTop = l.scrollHeight; wdFill(); })(document.getElementById('wdList'))"); await Task.Delay(250); };
+            var ground = await WardrobeQuery("Misc", "", "all");
+            int total = (int)ground["total"];
+            string sub = JsonConvert.DeserializeObject<string>(await Js("document.getElementById('sheetSub').textContent"));
+            Expect(sub.EndsWith("ground runes"), "subtitle '" + sub + "'");
+            Expect(await rowCount() == Math.Min(200, total), "first page rendered " + await rowCount() + " rows");
+            for (int i = 0; i < 6 && await rowCount() < total; i++) await scrollEnd();
+            Expect(await rowCount() == total, "scrolling listed " + await rowCount() + " of " + total + " ground runes");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!document.getElementById('wdFoot') && new Set(wd.res.items.map(i => i.f)).size === wd.res.items.length")),
+                "full list has a 'Loading more' footer or repeated rows");
+            await WardrobeQuery("Helm", "", "all");
+            Expect(JsonConvert.DeserializeObject<string>(await Js("(document.getElementById('wdFoot') || {}).textContent || ''")) == "Loading more…", "no 'Loading more' footer on a long list");
+            await scrollEnd();
+            Expect(await rowCount() >= 400, "scrolling the helm list did not add a page (" + await rowCount() + " rows)");
+            await Js("closeSheet()");
+        }
+
+        // Wardrobe try-on, live CDN: the item lands in the slot and on the
+        // avatar, Revert restores the slot, Keep commits, Take off clears it.
+        async Task LiveWardrobeTryOn()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('wardrobe')");
+            await WardrobeQuery("Helm", "leprechaun hat", "all");
+            const string pick = "wdTry(wd.res.items.find(i => i.n === 'Leprechaun Hat'))";
+            string before = JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm || null)"));
+            await JsAwait(pick);
+            string err = JsonConvert.DeserializeObject<string>(await Js("wd.err"));
+            Expect(string.IsNullOrEmpty(err), "try-on failed: " + err);
+            var slot = JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm)")));
+            Expect(((string)slot["file"]).EndsWith("LeprechaunHatF.swf", StringComparison.OrdinalIgnoreCase), "Helm slot file " + slot["file"]);
+            Expect(File.Exists((string)slot["path"]), "downloaded SWF missing: " + slot["path"]);
+            Expect(JsonConvert.DeserializeObject<string>(await Js("project.gear.Helm")) == "Leprechaun Hat", "gear name not updated");
+            await WaitState(s => s["helm"] != null && s["helm"].Type == JTokenType.Object && (bool)s["helm"]["v"] && s["helm"]["kids"].Any(), "tried helm on the avatar");
+            Snap("wardrobe_try_on");
+            await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_panel.png"));
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!!document.querySelector('#wdList .wd-row.try') && !document.getElementById('wdCard').hidden")), "row/card not in the trying state");
+            await JsAwait("wdRevert()");
+            string after = JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm || null)"));
+            Expect(after == before, "Revert left Helm = " + after + ", was " + before);
+            await JsAwait(pick);
+            await Js("wdKeep()");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("wd.trial === null && !!project.slots.Helm")), "Keep did not commit the helm");
+            await JsAwait("wdTakeOff()");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!project.slots.Helm")), "Take off left the helm in the slot");
+            await WaitState(s => s["helm"] == null || s["helm"].Type != JTokenType.Object || !(bool)s["helm"]["v"], "helm hidden after Take off");
+            await Js("closeSheet()");
+        }
+
+        // Unequipping a dual (Dagger) set - Take off, or the hide-weapon
+        // toggle - used to leave the off-hand copy in the hand. unarmed now
+        // hides both hands and un-hiding brings both back.
+        async Task DaggerOffhandFollowsUnarmed()
+        {
+            await Load("Weapon", Dagger, "Dagger");
+            await WaitState(s => Visible(s, "weapon") && Visible(s, "weaponOff"), "dagger in both hands");
+            Call("unarmed", "True");
+            await WaitState(s => !Visible(s, "weapon") && !Visible(s, "weaponOff"), "both hands empty after unarmed");
+            Call("unarmed", "False");
+            await WaitState(s => Visible(s, "weapon") && Visible(s, "weaponOff"), "dagger back in both hands");
+            Call("daggerMode", "False");
+            await WaitState(s => Visible(s, "weapon") && !Visible(s, "weaponOff"), "daggerMode off hides only the off hand");
+        }
+
+        // Wardrobe card: a slim name + actions row by default; the "i" button
+        // swaps in the full details card and is remembered.
+        async Task UiWardrobeDetails()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('wardrobe')");
+            await Js(@"localStorage.setItem('fb.wdDetails', '0'); wd.details = false; wd.slot = 'Helm'; wd.trial = null;
+              project.slots.Helm = { file: 'items\\helms\\Test.swf', path: 'C:\\test\\Test.swf', enabled: true }; project.gear.Helm = 'Test Helm'; wdRender();");
+            Func<Task<JObject>> card = async () => JObject.Parse(JsonConvert.DeserializeObject<string>(await Js(@"(() => {
+              const c = document.getElementById('wdCard');
+              return JSON.stringify({ hidden: c.hidden, slim: c.classList.contains('slim'), code: !!c.querySelector('code'),
+                buttons: [...c.querySelectorAll('button')].map(b => b.textContent), h: c.getBoundingClientRect().height,
+                info: document.getElementById('wdInfo').classList.contains('on') });
+            })()")));
+            var slim = await card();
+            Expect(!(bool)slim["hidden"] && (bool)slim["slim"] && !(bool)slim["code"], "default card should be the slim row: " + slim.ToString(Formatting.None));
+            Expect(slim["buttons"].ToString(Formatting.None) == "[\"Take off\"]", "slim row buttons " + slim["buttons"].ToString(Formatting.None));
+            Expect((double)slim["h"] <= 44, "slim row is " + slim["h"] + "px tall");
+            await Js("document.getElementById('wdInfo').click()");
+            var full = await card();
+            Expect(!(bool)full["slim"] && (bool)full["code"] && (bool)full["info"], "i button did not open the full card: " + full.ToString(Formatting.None));
+            Expect(JsonConvert.DeserializeObject<string>(await Js("localStorage.getItem('fb.wdDetails')")) == "1", "details choice not remembered");
+            await Js("document.getElementById('wdInfo').click(); delete project.slots.Helm; delete project.gear.Helm; wdRender(); closeSheet();");
+        }
+
+        // Gender switch with a catalog armor on: the armor is fetched again
+        // from classes/M/, the player gets the new gender, and back again.
+        async Task LiveWardrobeGender()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('wardrobe')");
+            await Js("project.gender = 'F'; wdReset();");
+            await WardrobeQuery("Armor", "legion doomknight", "all");
+            await JsAwait("wdTry(wd.res.items.find(i => i.f === 'LegionDoomKnightr3.swf'))");
+            await Js("wdKeep()");
+            Func<Task<string>> armor = async () => JsonConvert.DeserializeObject<string>(await Js("(project.slots.Armor && project.slots.Armor.file) || ''"));
+            Expect((await armor()).Replace('/', '\\').StartsWith(@"classes\F\", StringComparison.OrdinalIgnoreCase), "female armor file " + await armor());
+            await JsAwait("wdSetGender('M')");
+            string err = JsonConvert.DeserializeObject<string>(await Js("wd.err"));
+            Expect(string.IsNullOrEmpty(err), "gender switch reported: " + err);
+            Expect((await armor()).Replace('/', '\\').StartsWith(@"classes\M\", StringComparison.OrdinalIgnoreCase), "armor not refetched for M: " + await armor());
+            Expect(File.Exists(JsonConvert.DeserializeObject<string>(await Js("project.slots.Armor.path"))), "male armor SWF not on disk");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.querySelector('#wdGender .wd-g.on').dataset.g === 'M'")), "M not highlighted");
+            await WaitState(s => (string)s["gender"] == "M", "player gender M");
+            Snap("wardrobe_gender_m");
+            await JsAwait("wdSetGender('F')");
+            Expect((await armor()).Replace('/', '\\').StartsWith(@"classes\F\", StringComparison.OrdinalIgnoreCase), "armor not refetched for F: " + await armor());
+            await WaitState(s => (string)s["gender"] == "F", "player gender F");
+            await JsAwait("wdTakeOff()");
+            await Js("closeSheet()");
+        }
+
         // BG tab: clicking the selected scene again clears it, leaving the
         // plain background color (no "Empty" chip).
         async Task UiEmptyBackground()
@@ -1182,7 +1352,7 @@ namespace ManikinApp
                 if (JsonConvert.DeserializeObject<bool>(await Js("typeof TAB_TITLES[" + q + "] !== 'string'")))
                     found.Add(t + ": no TAB_TITLES entry");
             }
-            foreach (var tab in new[] { "backgrounds", "emotes", "colors", "log", "names", "monitor" })
+            foreach (var tab in new[] { "backgrounds", "emotes", "colors", "log", "names", "wardrobe", "monitor" })
             {
                 await JsAwait("openTab('" + tab + "')");
                 var res = JArray.Parse(JsonConvert.DeserializeObject<string>(await Js("window.__measureTab('" + tab + "')")));

@@ -982,6 +982,11 @@ package
       // "backhand". Dagger (dual wield) is the only other special case.
       public var weaponShown:Boolean = true;
 
+      // Off-hand copy wanted (Dagger set, or dagger mode on). Kept apart from
+      // weaponOff.visible so hiding the weapon can hide the off hand too and
+      // showing it again brings it back.
+      public var dualShown:Boolean = false;
+
       public var gauntletMode:Boolean = false;
 
       private function clearGauntlet() : void
@@ -1005,12 +1010,14 @@ package
          param1.addChildAt(_loc3_,1);
       }
 
-      // Hide weapon (unarmed): the held weapon, or the gauntlet pieces.
+      // Hide weapon (unarmed): the held weapon, a dual set's off-hand copy
+      // (it used to stay in the hand), or the gauntlet pieces.
       public function setWeaponShown(param1:Boolean) : void
       {
          var _loc2_:MovieClip = null;
          this.weaponShown = param1;
          this.mcChar.weapon.visible = param1 && !this.gauntletMode;
+         this.mcChar.weaponOff.visible = param1 && this.dualShown && !this.gauntletMode;
          for each(_loc2_ in [this.mcChar.fronthand,this.mcChar.backhand])
          {
             if(_loc2_.numChildren > 1)
@@ -1079,7 +1086,8 @@ package
             {
                this.mcChar.weapon.addChild(x);
                this.mcChar.weaponOff.addChild(xx);
-               this.mcChar.weaponOff.visible = true;
+               this.dualShown = true;
+               this.mcChar.weaponOff.visible = this.weaponShown;
             }
             else
             {
@@ -1114,7 +1122,8 @@ package
          {
             mcChar.weaponOff.addChild(e.target.content);
          }
-         this.mcChar.weaponOff.visible = true;
+         this.dualShown = true;
+         this.mcChar.weaponOff.visible = this.weaponShown;
       }
 
       public function loadCape(param1:String, param2:String) : void

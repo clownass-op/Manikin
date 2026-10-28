@@ -355,9 +355,11 @@ package character5_fla
          }
       }
       
+      // The off hand also stays hidden while the weapon is (unarmed).
       public function daggerMode(param1:String) : void
       {
-         this.pMC.mcChar.weaponOff.visible = AvatarMC.isTrue(param1);
+         this.pMC.dualShown = AvatarMC.isTrue(param1);
+         this.pMC.mcChar.weaponOff.visible = this.pMC.dualShown && this.pMC.weaponShown;
       }
       
       public function hairColor(param1:String) : void
