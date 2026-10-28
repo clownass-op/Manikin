@@ -49,6 +49,12 @@
     <Compile Include="Downloads.cs" />
     <Compile Include="AppForm.cs" />
     <Compile Include="Headless.cs" />
+    <Compile Include="Wardrobe.cs" />
+    <!-- Not in the repo: build it with tools\build_wardrobe.py. Optional so a
+         checkout without it still builds (the Wardrobe then says so). -->
+    <Content Include="catalog\wardrobe.json" Condition="Exists('catalog\wardrobe.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="ui\index.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -95,6 +101,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="flash\Frostvale.swf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="flash\Gradient.swf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="flash\Hill.swf">

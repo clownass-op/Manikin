@@ -248,8 +248,8 @@ namespace ManikinApp
                 if (File.Exists(p)) _char6 = File.ReadAllBytes(p);
                 Dbg("player loaded: " + (_char6 != null ? _char6.Length + " bytes from " + p : "NOT FOUND"));
                 // Background scenes: every *.swf in flash\ (or the app dir)
-                // except the player itself. Drop a new cp-*.swf in and it
-                // just shows up in the list.
+                // except the player itself. A new scene also needs its name
+                // in BG_SCENES (ui/index.html) to appear in the list.
                 _backgrounds.Clear();
                 foreach (var dir in new[] { Path.Combine(_baseDir, "flash"), _baseDir })
                 {

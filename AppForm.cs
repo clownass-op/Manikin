@@ -23,7 +23,7 @@ namespace ManikinApp
     {
         readonly AppForm _form;
 
-        public FbHost(AppForm form) { _form = form; }
+        public FbHost(AppForm form) { _form = form; Wardrobe.Preload(); }
 
         void Ui(Action a) { if (_form.IsHandleCreated) _form.Invoke((Action)a); else a(); }
         T Ui<T>(Func<T> f) { if (_form.IsHandleCreated) return (T)_form.Invoke((Func<T>)f); return f(); }
@@ -95,6 +95,11 @@ namespace ManikinApp
 
         public string BeginLoadChar(string name) { return StartJob(() => LoadCharCore(name)); }
         public string BeginDownloadAll(string varsJson, string dir) { return StartJob(() => DownloadAllCore(varsJson, dir)); }
+
+        // Wardrobe panel: catalog search (synchronous - a few ms once the
+        // catalog has loaded) and one item's SWF download (a job).
+        public string WardrobeQuery(string slot, string q, string access, int offset, int limit) { return Wardrobe.Query(slot, q, access, offset, limit); }
+        public string BeginWardrobeFetch(string slot, string file, string gender, string dir) { return StartJob(() => Wardrobe.Fetch(slot, file, gender, dir)); }
 
         // "" while running; the job's JSON once done (then forgotten).
         public string JobResult(string id)
@@ -1244,6 +1249,12 @@ namespace ManikinApp
         internal FlashCore Flash { get { return _flash; } }
         internal bool ReadyForTests { get { return _pageReady && _flashReady && _core != null; } }
         internal Task<string> EvalAsync(string js) { return _core.ExecuteScriptAsync(js); }
+        // Headless: the page as Chromium painted it (panels; the Flash
+        // surface is a separate window and shows as the page behind it).
+        internal async Task SavePagePng(string path)
+        {
+            using (var fs = File.Create(path)) await _core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, fs);
+        }
         protected override bool ShowWithoutActivation { get { return Headless; } }
 
         static readonly Color UiBg = Color.FromArgb(0x0A, 0x0C, 0x14);
