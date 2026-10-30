@@ -31,6 +31,10 @@ namespace ManikinApp
         public string Ping(string s) { return "pong:" + s; }
         public void JsLog(string json) { AppForm.Dbg("JS: " + json); }
         public string GetAppDir() { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'); }
+
+        // Settings > "Download SWFs". Off: fetched items are cached in a temp
+        // folder instead of the swf folder, so nothing is written there.
+        public bool SetDownloadSwf(bool on) { Downloads.SaveToFolder = on; return Downloads.SaveToFolder; }
         public string GetLog() { return AppForm.GetLog(); }
         public void ClearLog() { AppForm.ClearLog(); }
 
@@ -153,6 +157,8 @@ namespace ManikinApp
                 var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var p in vo.Properties()) vars[p.Name] = p.Value.Value<string>();
                 var items = Downloads.BuildDownloads(vars);
+                // Honours the Settings toggle: off redirects the cache to temp.
+                dir = Downloads.EffectiveDir(dir);
                 try { Directory.CreateDirectory(dir); } catch { }
                 var results = new JArray();
                 for (int i = 0; i < items.Count; i++)

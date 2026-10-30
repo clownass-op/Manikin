@@ -452,7 +452,8 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
           <div class="row"><input type="checkbox" id="hideUI"> <span class="k">Hide UI</span></div>
           <div class="row"><input type="checkbox" id="matchTitle"> <span class="k">Match title bar</span></div>
           <div class="row"><input type="checkbox" id="daggerMode"> <span class="k">Dagger mode</span></div>
-          <div class="row"><input type="checkbox" id="bgDrag"> <span class="k">Drag background</span></div></div>
+          <div class="row"><input type="checkbox" id="bgDrag"> <span class="k">Drag background</span></div>
+          <div class="row"><input type="checkbox" id="dlSwf" checked> <span class="k">Download SWFs</span></div></div>
         <div class="g2">
           <div class="full"><label>Character</label><input type="text" id="nameText" placeholder="Avatar name"></div>
           <div><label>Weapon</label><input type="text" id="nmWeapon" placeholder="Weapon"></div>
@@ -537,6 +538,7 @@ function post(method, args) {
       case 'overlayRects': return __fb.reportOverlayRects(JSON.stringify(args.rects || []), !!args.dockHidden, !!args.sheetHidden).then(() => null);
       case 'reset': return __fb.reset().then(() => null);
       case 'gear': return __fb.gear(args.rows).then(() => null);
+      case 'downloadSwf': return __fb.setDownloadSwf(!!args.on).then(() => null);
       case 'cosmetics': return __fb.cosmetics(args.state).then(() => null);
       case 'cosSeq': return __fb.cosmeticsSeq();
       case 'loadName': return __fb.loadNameRequest();
@@ -574,6 +576,7 @@ function __makeMockHost() {
     minimize: () => ok(), maximize: () => ok(), closeWindow: () => ok(), startDrag: () => ok(),
     reportRect: () => ok(), flashCall: () => ok(), flashQuery: () => ok('1'),
     background: () => ok(), reset: () => ok(), gear: () => ok(), cosmetics: () => ok(),
+    setDownloadSwf: () => ok(true),
     cosmeticsSeq: () => ok(0), loadNameRequest: () => ok(''), loadItem: () => ok(),
     dropItemBytes: () => ok(), jsLog: () => ok(),
     beginLoadChar: () => ok('mock-char'), beginDownloadAll: () => ok('mock-dl'),
@@ -1128,7 +1131,7 @@ async function applyVars(name, vars, dir) {
   wdReset();
   renderGear();
   monitorEl.textContent = formatVars(vars);
-  setStatus('Downloading item SWFs to ' + dir + '...');
+  setStatus('Downloading item SWFs...');
   const dl = await post('downloadAll', { vars, dir });
   if (!dl || !dl.items) { setStatus('Failed: ' + ((dl && dl.__postError) || 'no download reply')); return; }
   const pbar = document.getElementById('pfill');
@@ -1485,6 +1488,18 @@ bgDragBox.onchange = () => {
 };
 bgDragBox.checked = !!project.bgDrag;
 flashCall('bgDrag', [project.bgDrag ? 'True' : 'False']);
+
+// Settings > Download SWFs. On: fetched item SWFs are saved into the output
+// folder (the swf folder, same as before). Off: they go to a temp cache, so
+// nothing is written to the swf folder.
+const dlSwfBox = document.getElementById('dlSwf');
+function applyDlSwf() {
+  post('downloadSwf', { on: dlSwfBox.checked });
+  try { localStorage.setItem('fb.dlSwf', dlSwfBox.checked ? '1' : '0'); } catch (e) {}
+}
+try { dlSwfBox.checked = localStorage.getItem('fb.dlSwf') !== '0'; } catch (e) {}
+dlSwfBox.onchange = applyDlSwf;
+applyDlSwf();
 
 const GEAR_TOGGLES = { weapon: 'hideWeapon', armor: 'hideArmor', helm: 'hideHelm', cape: 'hideCape', pet: 'hidePet', misc: 'hideMisc' };
 setInterval(async () => {

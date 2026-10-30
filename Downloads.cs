@@ -198,6 +198,18 @@ namespace ManikinApp
             list.Add(new ItemDownload { Type = type, Url = GAME + file, File = LocalPathOf(file), Link = Var(vars, linkKey), Cosmetic = cosmetic });
         }
 
+        // Settings > Download SWFs. When off, fetched items are cached in a
+        // temp folder instead of the configured one, so the swf folder is left
+        // untouched (nothing is saved next to the exe).
+        public static bool SaveToFolder = true;
+
+        // The folder a fetched item is actually written to.
+        public static string EffectiveDir(string dir)
+        {
+            if (SaveToFolder && !string.IsNullOrEmpty(dir)) return dir;
+            return Path.Combine(Path.GetTempPath(), "Manikin", "swf");
+        }
+
         // Cached copy if present, else download. Returns the local path or
         // null. (Both the host-object and web-message paths use this.)
         public static async Task<string> EnsureLocalAsync(ItemDownload it, string dir)

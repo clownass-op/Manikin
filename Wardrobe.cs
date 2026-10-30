@@ -500,7 +500,7 @@ namespace ManikinApp
                     rel.Length > 0 && !rel.StartsWith("classes/", StringComparison.OrdinalIgnoreCase))
                     rel = "classes/" + (gender == "M" ? "M" : "F") + "/" + rel;
                 var it = new Downloads.ItemDownload { Type = slot, Url = Downloads.GAME + rel, File = Downloads.LocalPathOf(rel) };
-                string path = Downloads.EnsureLocalAsync(it, dir).GetAwaiter().GetResult();
+                string path = Downloads.EnsureLocalAsync(it, Downloads.EffectiveDir(dir)).GetAwaiter().GetResult();
                 if (path == null) return JsonConvert.SerializeObject(new { ok = false, error = "Download failed: " + rel });
                 return JsonConvert.SerializeObject(new { ok = true, path, file = it.File });
             }
