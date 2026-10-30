@@ -294,7 +294,7 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .wd-slot{height:34px;border-radius:11px;background:#141725;border:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .wd-slot img{width:20px;height:20px;object-fit:contain;}
 .wd-slot:hover{background:#232742;border-color:rgba(255,255,255,.14);}
-.wd-slot.on{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border-color:transparent;box-shadow:inset 0 1px 0 rgba(255,255,255,.3);}
+.wd-slot.on{background:color-mix(in srgb,var(--accent-3) 40%,#141725);border-color:var(--accent-1);box-shadow:none;}
 .wd-access{flex-shrink:0;}
 .wd-count{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:8px 2px 4px;font-size:10.5px;font-weight:600;color:color-mix(in srgb,var(--accent-1) 35%,#a3a9c0);flex-shrink:0;}
 .wd-count #wdCount{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -329,6 +329,11 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .wd-more{font-size:10px;color:#7C8399;text-align:center;padding:8px 4px;flex-shrink:0;line-height:1.4;}
 .wd-card{flex-shrink:0;margin-top:8px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:10px 11px;display:flex;flex-direction:column;gap:5px;}
 .wd-card[hidden]{display:none;}
+.wd-pager{flex-shrink:0;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:8px;}
+.wd-pager[hidden]{display:none;}
+.wd-pager .action-btn{height:26px;padding:0 12px;font-size:11px;border-radius:9px;flex:none;}
+.wd-pager .page-btn[disabled],.wd-pager .action-btn[disabled]{opacity:.35;}
+.wd-pager .page-label{font-size:11px;color:#9aa3bd;white-space:nowrap;}
 .wd-card .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
 .wd-card .t{font-size:12.5px;font-weight:700;color:#fff;line-height:1.25;}
 .wd-card .wd-st{margin-top:2px;}
@@ -405,6 +410,7 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
           </div>
         </div>
         <div class="wd-list" id="wdList"></div>
+        <div class="wd-pager" id="wdPager" hidden></div>
         <div class="wd-card" id="wdCard" hidden></div>
       </div>
       <div class="panel" id="p-backgrounds">
@@ -1516,8 +1522,8 @@ document.getElementById('hideUI').onchange = e => {
    trying something in another slot reverts the open trial first. */
 const WD_SLOTS = [['Helm', 'helm', 'helms'], ['Armor', 'armor', 'armors'], ['Cape', 'cape', 'capes'],
   ['Weapon', 'weapon', 'weapons'], ['Pet', 'pet', 'pets'], ['Misc', 'misc', 'ground runes']];
-const WD_PAGE = 200;
-const wd = { slot: 'Helm', q: '', access: 'all', res: null, more: false, trial: null, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false };
+const WD_PAGE = 50;
+const wd = { slot: 'Helm', q: '', access: 'all', res: null, page: 1, pages: 1, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false, loadTries: 0 };
 try { wd.details = localStorage.getItem('fb.wdDetails') === '1'; } catch (e) {}
 
 function wdEl(tag, cls, text) {
@@ -1544,38 +1550,68 @@ function wdNorm(t, f) {
   return t === 'Armor' ? f.split('/').pop() : f;
 }
 function wdWorn(t) { const s = activeEntry(t); return s && s.path ? wdNorm(t, s.file) : ''; }
-function wdReset() { wd.trial = null; wd.info = {}; wd.busy = ''; wd.err = ''; if (activeTab === 'wardrobe') wdRender(); }
+function wdReset() { wd.page = 1; wd.pages = 1; wd.res = null; wd.info = {}; wd.busy = ''; wd.err = ''; if (activeTab === 'wardrobe') wdRender(); }
 
-// The list holds every match: the first page comes with the query, the rest
-// is fetched a page at a time as the list scrolls near its end.
-async function wdQuery() {
+// One page of matches, straight from the in-memory C# catalog (a local
+// linear scan per page: a few ms). No network on page flips.
+async function wdGo(p) {
   const seq = ++wd.seq;
   let r = null;
-  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: 0, limit: WD_PAGE })); } catch (e) {}
+  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: (p - 1) * WD_PAGE, limit: WD_PAGE })); } catch (e) {}
   if (seq !== wd.seq) return;
-  wd.res = r && r.ok ? r : { ok: false, error: (r && r.error) || 'Catalog not available.', items: [], total: 0, inSlot: 0 };
-  wd.more = false;
-  document.getElementById('wdList').textContent = '';
-  wdAppendRows(wd.res.items);
+  // Catalog still streaming from Supabase: poll instead of blocking the UI
+  // (the old path froze the whole window while ~51 pages were fetched).
+  if (r && r.loading) {
+    wd.loadTries = (wd.loadTries || 0) + 1;
+    wd.res = { ok: false, loading: true, error: r.error, items: [], total: 0, inSlot: 0 };
+    wd.page = 1; wd.pages = 1;
+    wd.err = '';
+    renderList();
+    wdRender();
+    if (wd.loadTries < 600) {
+      await new Promise(x => setTimeout(x, 400));
+      if (seq === wd.seq) return wdGo(p);
+    }
+    return;
+  }
+  wd.loadTries = 0;
+  wd.res = r && r.ok ? r : { ok: false, error: (r && r.error) || 'Catalog not available.', items: [], total: (r && r.total) || 0, inSlot: 0 };
+  wd.page = p;
+  wd.pages = Math.max(1, Math.ceil(wd.res.total / WD_PAGE));
+  renderList();
   wdRender();
 }
+function wdQuery() { return wdGo(1); }
 
-async function wdMore() {
-  const r = wd.res, seq = wd.seq;
-  if (wd.more || !r || r.ok === false || r.items.length >= r.total) return;
-  wd.more = true;
-  let p = null;
-  try { p = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: r.items.length, limit: WD_PAGE })); } catch (e) {}
-  wd.more = false;
-  if (seq !== wd.seq || !p || !p.ok || !p.items.length) return;
-  r.items.push(...p.items);
-  wdAppendRows(p.items);
-  wdMarkRows();
-  wdFill();
+function renderList() {
+  const list = document.getElementById('wdList');
+  list.textContent = '';
+  const r = wd.res || { items: [] };
+  const frag = document.createDocumentFragment();
+  (r.items || []).forEach(it => frag.appendChild(wdRowEl(it)));
+  list.appendChild(frag);
+  const foot = r.loading ? 'Loading catalog…'
+    : (!r.items || !r.items.length ? (r.ok === false ? r.error : 'No items match.') : '');
+  if (foot) { const d = wdEl('div', 'wd-more', foot); list.appendChild(d); }
 }
-function wdFill() {
-  const l = document.getElementById('wdList');
-  if (l.scrollTop + l.clientHeight > l.scrollHeight - 400) wdMore();
+// Bottom pager strip (sits where the Revert/Keep trial bar used to be).
+function pagerEl() {
+  const pager = document.getElementById('wdPager');
+  const r = wd.res;
+  const total = (r && r.total) || 0;
+  const show = r && r.ok !== false && !r.loading && total > WD_PAGE;
+  pager.hidden = !show;
+  while (pager.firstChild) pager.removeChild(pager.firstChild);
+  if (!show) return pager;
+  const go = (p, guard) => { if (guard) wdGo(p); };
+  const prev = wdBtn('‹', '', () => go(wd.page - 1, wd.page > 1));
+  const next = wdBtn('›', '', () => go(wd.page + 1, wd.page < wd.pages));
+  if (wd.page <= 1) prev.setAttribute('disabled', '');
+  if (wd.page >= wd.pages) next.setAttribute('disabled', '');
+  pager.appendChild(prev);
+  pager.appendChild(wdEl('span', 'page-label', 'Page ' + wd.page + ' / ' + wd.pages + ' · ' + total.toLocaleString('en-US')));
+  pager.appendChild(next);
+  return pager;
 }
 
 function wdRowEl(it) {
@@ -1601,25 +1637,14 @@ function wdRowEl(it) {
   row.onclick = () => wdTry(it);
   return row;
 }
-function wdAppendRows(items) {
-  const list = document.getElementById('wdList');
-  const old = document.getElementById('wdFoot');
-  if (old) old.remove();
-  const frag = document.createDocumentFragment();
-  items.forEach(it => frag.appendChild(wdRowEl(it)));
-  list.appendChild(frag);
-  const r = wd.res;
-  const foot = r.items.length < r.total ? 'Loading more…' : (!r.items.length && r.ok !== false ? 'No items match.' : '');
-  if (foot) { const d = wdEl('div', 'wd-more', foot); d.id = 'wdFoot'; list.appendChild(d); }
-}
 // Try-on / wearing / loading marks, updated in place (no list rebuild).
 function wdMarkRows() {
-  const worn = wdWorn(wd.slot), trying = !!(wd.trial && wd.trial.type === wd.slot);
+  const worn = wdWorn(wd.slot);
   document.querySelectorAll('#wdList .wd-row').forEach(row => {
     const on = row._f === worn;
-    row.classList.toggle('try', on && trying);
-    row.classList.toggle('worn', on && !trying);
-    const st = wd.busy === row._f ? 'LOADING' : on ? (trying ? 'TRYING' : 'WEARING') : '';
+    row.classList.toggle('worn', on);
+    row.classList.remove('try');
+    const st = wd.busy === row._f ? 'LOADING' : on ? 'WEARING' : '';
     row._st.textContent = st;
     row._st.hidden = !st;
   });
@@ -1643,18 +1668,18 @@ function wdRender() {
   document.getElementById('wdCount').textContent = msg || (filtered ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot);
   wdMarkRows();
   wdRenderCard();
+  pagerEl();
 }
 
 function wdRenderCard() {
   const card = document.getElementById('wdCard');
   card.textContent = '';
   const t = wd.slot;
-  const trial = wd.trial && wd.trial.type === t ? wd.trial : null;
   const s = activeEntry(t);
-  if (!trial && !(s && s.path)) { card.hidden = true; return; }
+  if (!(s && s.path)) { card.hidden = true; return; }
   card.hidden = false;
   const kept = wd.info[t];
-  const it = trial ? trial.item : (kept && wdNorm(t, kept.f) === wdWorn(t) ? kept : null);
+  const it = kept && wdNorm(t, kept.f) === wdWorn(t) ? kept : null;
   // Default: one slim row with the actions. The "i" button opens the full card.
   card.classList.toggle('slim', !wd.details);
   if (!wd.details) {
@@ -1662,13 +1687,12 @@ function wdRenderCard() {
     const tt = wdEl('div', 't', nm);
     tt.title = nm;
     card.appendChild(tt);
-    if (trial) { card.appendChild(wdBtn('Revert', '', wdRevert)); card.appendChild(wdBtn('Keep', 'primary', wdKeep)); }
-    else card.appendChild(wdBtn('Take off', '', wdTakeOff));
+    card.appendChild(wdBtn('Take off', '', wdTakeOff));
     return;
   }
   const hd = wdEl('div', 'hd');
   hd.appendChild(wdEl('div', 't', it ? it.n : (wdSet(t).names[t] || 'Current item')));
-  hd.appendChild(wdEl('div', 'wd-st', trial ? 'TRYING ON' : 'WEARING'));
+  hd.appendChild(wdEl('div', 'wd-st', 'WEARING'));
   card.appendChild(hd);
   if (it) {
     if (it.alt.length)
@@ -1678,8 +1702,7 @@ function wdRenderCard() {
   }
   card.appendChild(wdEl('code', '', String((s && s.file) || '').replace(/\\/g, '/')));
   const btns = wdEl('div', 'wd-btns');
-  if (trial) { btns.appendChild(wdBtn('Revert', '', wdRevert)); btns.appendChild(wdBtn('Keep', 'primary', wdKeep)); }
-  else btns.appendChild(wdBtn('Take off', '', wdTakeOff));
+  btns.appendChild(wdBtn('Take off', '', wdTakeOff));
   card.appendChild(btns);
 }
 
@@ -1707,35 +1730,16 @@ async function wdTry(it) {
     wdRender();
     return;
   }
-  if (wd.trial && wd.trial.type !== t) await wdRevert();
+  // Wear it right away - no Revert/Keep confirmation step.
   const set = wdSet(t);
-  if (!wd.trial) wd.trial = { type: t, set, prev: set.entries[t], prevName: set.names[t] };
-  wd.trial.item = it;
-  wd.trial.set.entries[t] = { file: res.file, path: res.path, link: it.link || '', enabled: true, wtype: it.w || '' };
-  wd.trial.set.names[t] = it.n;
+  set.entries[t] = { file: res.file, path: res.path, link: it.link || '', enabled: true, wtype: it.w || '' };
+  set.names[t] = it.n;
+  wd.info[t] = it;
   await wdApply(t);
-}
-
-async function wdRevert() {
-  const tr = wd.trial;
-  if (!tr) return;
-  wd.trial = null;
-  if (tr.prev) tr.set.entries[tr.type] = tr.prev; else delete tr.set.entries[tr.type];
-  if (tr.prevName) tr.set.names[tr.type] = tr.prevName; else delete tr.set.names[tr.type];
-  await wdApply(tr.type);
-}
-
-function wdKeep() {
-  if (!wd.trial) return;
-  wd.info[wd.trial.type] = wd.trial.item;
-  wd.trial = null;
-  renderGear();
-  wdRender();
 }
 
 async function wdTakeOff() {
   const t = wd.slot, set = wdSet(t);
-  if (wd.trial && wd.trial.type === t) wd.trial = null;
   delete set.entries[t];
   delete set.names[t];
   delete wd.info[t];
@@ -1768,7 +1772,6 @@ async function wdSetGender(g) {
   };
   for (const set of [project.slots, project.cosmetics])
     for (const t of ['Armor', 'Hair']) if (set[t]) set[t] = await swap(t, set[t]);
-  if (wd.trial && wd.trial.type === 'Armor') wd.trial.prev = await swap('Armor', wd.trial.prev);
   project.gender = g;
   wd.busy = '';
   if (missing.length) wd.err = 'No ' + (g === 'M' ? 'male' : 'female') + ' version of the ' + [...new Set(missing)].join(' or ').toLowerCase() + '; kept it.';
@@ -1794,7 +1797,7 @@ async function wdSetGender(g) {
   document.querySelectorAll('#wdAccess .preset-chip').forEach(c => {
     c.onclick = () => { wd.access = c.dataset.a; document.getElementById('wdList').scrollTop = 0; wdQuery(); };
   });
-  document.getElementById('wdList').addEventListener('scroll', wdFill);
+  // (list scroll no longer pages anything - the pager bar below does)
   document.querySelectorAll('#wdGender .wd-g').forEach(b => { b.onclick = () => wdSetGender(b.dataset.g); });
   document.getElementById('wdInfo').onclick = () => {
     wd.details = !wd.details;

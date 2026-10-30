@@ -52,7 +52,30 @@ namespace ManikinApp
             catch { }
 
             var opt = HeadlessOptions.Parse(args);
+            try
+            {
+                Directory.CreateDirectory(opt.OutDir);
+                var file = new StreamWriter(Path.Combine(opt.OutDir, "console.log"), false) { AutoFlush = true };
+                Console.SetOut(new ConsoleTee(Console.Out, file));
+            }
+            catch { }
             AppForm.Headless = true;
+            // Runs 17:01-17:26 all died silently (no crash lines, no report,
+            // nothing) while tests were already running: capture both .NET
+            // crash events into the debug log AND the results console.log so
+            // the cause always lands on disk.
+            AppDomain.CurrentDomain.UnhandledException += (s, ev) =>
+            {
+                string m = "HEADLESS UNHANDLED[" + (ev.IsTerminating ? "fatal" : "bg") + "]: " + ev.ExceptionObject;
+                AppForm.Dbg(m);
+                try { Console.WriteLine(m); } catch { }
+            };
+            Application.ThreadException += (s, ev) =>
+            {
+                string m = "HEADLESS THREAD-EX: " + ev.Exception;
+                AppForm.Dbg(m);
+                try { Console.WriteLine(m); } catch { }
+            };
             if (!string.IsNullOrEmpty(opt.Player)) FlashCore.PlayerOverride = Path.GetFullPath(opt.Player);
 
             Application.EnableVisualStyles();
@@ -76,8 +99,21 @@ namespace ManikinApp
                 form.Close();
             };
             Application.Run(form);
+            AppForm.Dbg("HEADLESS: Application.Run returned, code=" + code);
             return code;
         }
+    }
+
+    // Mirror everything printed by Console.Out also into the results folder's
+    // console.log: the piped stdout of a WinExe is unreliable and dies with
+    // the process, which is how past runs lost all suite output.
+    class ConsoleTee : TextWriter
+    {
+        readonly TextWriter _a, _b;
+        public ConsoleTee(TextWriter a, TextWriter b) { _a = a; _b = b; }
+        public override Encoding Encoding { get { return _a.Encoding; } }
+        public override void Write(char c) { try { _a.Write(c); } catch { } _b.Write(c); }
+        public override void WriteLine(string s) { try { _a.WriteLine(s); } catch { } _b.WriteLine(s); }
     }
 
     class HeadlessOptions
@@ -178,6 +214,7 @@ namespace ManikinApp
                 if (!string.IsNullOrEmpty(boot)) Log("HEADLESS: player boot error: " + boot);
                 return 2;
             }
+            Log("page+player ready, driving the suite");
 
             var tests = new List<Tuple<string, bool, Func<Task>>>
             {
@@ -233,6 +270,9 @@ namespace ManikinApp
 
             var results = new JArray();
             int pass = 0, fail = 0, skip = 0;
+            int chosen = 0;
+            foreach (var t in tests) if (_opt.Only.Length == 0 || _opt.Only.Any(x => t.Item1.IndexOf(x, StringComparison.OrdinalIgnoreCase) >= 0)) chosen++;
+            Log("selected tests: " + chosen);
             foreach (var t in tests)
             {
                 string name = t.Item1;
@@ -248,6 +288,7 @@ namespace ManikinApp
                     results.Add(r);
                     continue;
                 }
+                AppForm.Dbg("HEADLESS: test " + name + " begin");
                 try
                 {
                     await ResetPlayer();
@@ -262,6 +303,7 @@ namespace ManikinApp
                     r["detail"] = ex is TestFailure || skipped ? ex.Message : ex.ToString();
                     if (skipped) skip++; else fail++;
                     Log((skipped ? "SKIP " : "FAIL ") + name + ": " + ex.Message);
+                    AppForm.Dbg("HEADLESS: test " + name + " fail: " + ex.Message);
                     try { Snap("FAIL_" + name); } catch { }
                 }
                 r["ms"] = sw.ElapsedMilliseconds;
@@ -1058,8 +1100,11 @@ namespace ManikinApp
         // access filters, cleaned CDN paths, and the 200-row cap.
         async Task<JObject> WardrobeQuery(string slot, string text, string access)
         {
+            // The promise settles only when the page has its page of matching
+            // rows (wdGo polls while the C# catalog is still loading from
+            // Supabase: a cold ~51-page load can legitimately take a while).
             await JsAwait("(wd.slot=" + JsonConvert.ToString(slot) + ", wd.q=" + JsonConvert.ToString(text)
-                + ", wd.access=" + JsonConvert.ToString(access) + ", wdQuery())");
+                + ", wd.access=" + JsonConvert.ToString(access) + ", wdQuery())", 180000);
             return JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(wd.res)")));
         }
 
@@ -1069,32 +1114,38 @@ namespace ManikinApp
         {
             await Js("window.__noUiLock = true");
             await JsAwait("openTab('wardrobe')");
-            var all = await WardrobeQuery("Helm", "leprechaun hat", "all");
+            var all = await WardrobeQuery("Helm", "leprechaun", "all");
             Expect((bool)all["ok"], "catalog query failed: " + all["error"]);
             Expect((int)all["inSlot"] > 10000, "helm count " + all["inSlot"]);
-            Expect(HasItem(all, "Leprechaun Hat"), "search 'leprechaun hat' missed Leprechaun Hat");
-            Expect(!HasItem(await WardrobeQuery("Helm", "leprechaun hat", "ac"), "Leprechaun Hat"), "AC filter kept a gold item");
-            Expect(HasItem(await WardrobeQuery("Helm", "leprechaun hat", "free"), "Leprechaun Hat"), "Free filter dropped a free item");
-            Expect(!HasItem(await WardrobeQuery("Helm", "leprechaun hat", "member"), "Leprechaun Hat"), "Member filter kept a free item");
+            Expect(HasItem(all, "Mecha Leprechaun Helm"), "search 'leprechaun' missed Mecha Leprechaun Helm");
+            Expect(HasItem(await WardrobeQuery("Helm", "leprechaun", "ac"), "Mecha Leprechaun Helm"), "AC filter dropped an AC item");
+            var freeH = await WardrobeQuery("Helm", "leprechaun", "free");
+            var memH = await WardrobeQuery("Helm", "leprechaun", "member");
+            Expect(!HasItem(freeH, "Mecha Leprechaun Helm"), "Free filter kept an AC item");
+            Expect((int)all["total"] == (int)freeH["total"] + (int)memH["total"], "access partition mismatch");
             var dk = await WardrobeQuery("Armor", "legion doomknight", "all");
             Expect(dk["items"].Any(i => (string)i["f"] == "LegionDoomKnightr3.swf"), "Legion DoomKnight path missing or not cleaned: " + dk["items"].ToString(Formatting.None));
-            // Paging: a page per query, more pages as the list scrolls, until
-            // every match is listed once.
+            // Paging: WD_PAGE = 50 rows per page; the bottom pager strip flips
+            // pages inside the in-memory catalog (no network on a page flip).
             Func<Task<int>> rowCount = async () => JsonConvert.DeserializeObject<int>(await Js("document.querySelectorAll('#wdList .wd-row').length"));
-            Func<Task> scrollEnd = async () => { await Js("(l => { l.scrollTop = l.scrollHeight; wdFill(); })(document.getElementById('wdList'))"); await Task.Delay(250); };
             var ground = await WardrobeQuery("Misc", "", "all");
             int total = (int)ground["total"];
+            int pages = (total + 49) / 50;
             string sub = JsonConvert.DeserializeObject<string>(await Js("document.getElementById('sheetSub').textContent"));
             Expect(sub.EndsWith("ground runes"), "subtitle '" + sub + "'");
-            Expect(await rowCount() == Math.Min(200, total), "first page rendered " + await rowCount() + " rows");
-            for (int i = 0; i < 6 && await rowCount() < total; i++) await scrollEnd();
-            Expect(await rowCount() == total, "scrolling listed " + await rowCount() + " of " + total + " ground runes");
-            Expect(JsonConvert.DeserializeObject<bool>(await Js("!document.getElementById('wdFoot') && new Set(wd.res.items.map(i => i.f)).size === wd.res.items.length")),
-                "full list has a 'Loading more' footer or repeated rows");
+            Expect(await rowCount() == Math.Min(50, total), "first page rendered " + await rowCount() + " rows");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("new Set(wd.res.items.map(i => i.f)).size === wd.res.items.length")),
+                "page has repeated rows");
+            string lbl1 = JsonConvert.DeserializeObject<string>(await Js("(document.querySelector('#wdPager .page-label') || {}).textContent || ''"));
+            Expect(lbl1 == "Page 1 / " + pages + " · " + total, "pager label '" + lbl1 + "'");
+            await JsAwait("wdGo(2)");
+            Expect(await rowCount() == Math.Min(50, total - 50), "page 2 rendered " + await rowCount() + " rows");
+            string lbl2 = JsonConvert.DeserializeObject<string>(await Js("(document.querySelector('#wdPager .page-label') || {}).textContent || ''"));
+            Expect(lbl2 == "Page 2 / " + pages + " · " + total, "page 2 label '" + lbl2 + "'");
+            await JsAwait("wdGo(1)");
+            Expect(await rowCount() == Math.Min(50, total), "back on page 1 rendered " + await rowCount() + " rows");
             await WardrobeQuery("Helm", "", "all");
-            Expect(JsonConvert.DeserializeObject<string>(await Js("(document.getElementById('wdFoot') || {}).textContent || ''")) == "Loading more…", "no 'Loading more' footer on a long list");
-            await scrollEnd();
-            Expect(await rowCount() >= 400, "scrolling the helm list did not add a page (" + await rowCount() + " rows)");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdPager').hidden === false")), "pager hidden on a long list");
             await Js("closeSheet()");
         }
 
@@ -1104,26 +1155,29 @@ namespace ManikinApp
         {
             await Js("window.__noUiLock = true");
             await JsAwait("openTab('wardrobe')");
-            await WardrobeQuery("Helm", "leprechaun hat", "all");
-            const string pick = "wdTry(wd.res.items.find(i => i.n === 'Leprechaun Hat'))";
-            string before = JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm || null)"));
+            await WardrobeQuery("Helm", "leprechaun", "all");
+            const string pick = "wdTry(wd.res.items.find(i => i.n === 'Mecha Leprechaun Helm'))";
             await JsAwait(pick);
             string err = JsonConvert.DeserializeObject<string>(await Js("wd.err"));
             Expect(string.IsNullOrEmpty(err), "try-on failed: " + err);
             var slot = JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm)")));
-            Expect(((string)slot["file"]).EndsWith("LeprechaunHatF.swf", StringComparison.OrdinalIgnoreCase), "Helm slot file " + slot["file"]);
+            Expect(((string)slot["file"]).EndsWith("MechaLeprechaunHelm.swf", StringComparison.OrdinalIgnoreCase), "Helm slot file " + slot["file"]);
             Expect(File.Exists((string)slot["path"]), "downloaded SWF missing: " + slot["path"]);
-            Expect(JsonConvert.DeserializeObject<string>(await Js("project.gear.Helm")) == "Leprechaun Hat", "gear name not updated");
+            Expect(JsonConvert.DeserializeObject<string>(await Js("project.gear.Helm")) == "Mecha Leprechaun Helm", "gear name not updated");
             await WaitState(s => s["helm"] != null && s["helm"].Type == JTokenType.Object && (bool)s["helm"]["v"] && s["helm"]["kids"].Any(), "tried helm on the avatar");
             Snap("wardrobe_try_on");
             await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_panel.png"));
-            Expect(JsonConvert.DeserializeObject<bool>(await Js("!!document.querySelector('#wdList .wd-row.try') && !document.getElementById('wdCard').hidden")), "row/card not in the trying state");
-            await JsAwait("wdRevert()");
-            string after = JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(project.slots.Helm || null)"));
-            Expect(after == before, "Revert left Helm = " + after + ", was " + before);
-            await JsAwait(pick);
-            await Js("wdKeep()");
-            Expect(JsonConvert.DeserializeObject<bool>(await Js("wd.trial === null && !!project.slots.Helm")), "Keep did not commit the helm");
+            // Click-to-wear: the row shows WEARING and the card grows a Take
+            // off button; no Revert/Keep trial bar exists anymore.
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!!document.querySelector('#wdList .wd-row.worn') && !document.getElementById('wdCard').hidden")), "row/card not in the worn state");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!wd.trial")), "trial state still exists");
+            // Switch straight to another item (old Revert + Keep flow is gone).
+            Func<Task<string>> helmFile = async () => JsonConvert.DeserializeObject<string>(await Js("(project.slots.Helm && project.slots.Helm.file) || ''"));
+            // Catalog files keep their full relative path (items/helms/...), so
+            // match on the suffix rather than the bare file name.
+            await JsAwait("wdTry(wd.res.items.find(i => i.f.endsWith('LeppyRangerHatF.swf')))");
+            string item2 = await helmFile();
+            Expect(item2.EndsWith("LeppyRangerHatF.swf", StringComparison.OrdinalIgnoreCase), "second wear file " + item2);
             await JsAwait("wdTakeOff()");
             Expect(JsonConvert.DeserializeObject<bool>(await Js("!project.slots.Helm")), "Take off left the helm in the slot");
             await WaitState(s => s["helm"] == null || s["helm"].Type != JTokenType.Object || !(bool)s["helm"]["v"], "helm hidden after Take off");
@@ -1179,7 +1233,6 @@ namespace ManikinApp
             await Js("project.gender = 'F'; wdReset();");
             await WardrobeQuery("Armor", "legion doomknight", "all");
             await JsAwait("wdTry(wd.res.items.find(i => i.f === 'LegionDoomKnightr3.swf'))");
-            await Js("wdKeep()");
             Func<Task<string>> armor = async () => JsonConvert.DeserializeObject<string>(await Js("(project.slots.Armor && project.slots.Armor.file) || ''"));
             Expect((await armor()).Replace('/', '\\').StartsWith(@"classes\F\", StringComparison.OrdinalIgnoreCase), "female armor file " + await armor());
             await JsAwait("wdSetGender('M')");
