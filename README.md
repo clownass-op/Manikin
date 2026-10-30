@@ -44,6 +44,15 @@ The exe lands in `bin\Manikin.exe`.
    preview to try it on.
 3. Use the side panel for backgrounds, size, dyes, emotes, settings and logs.
 
+## Wardrobe catalog
+
+The item catalog is read from Supabase. Its credentials are deliberately **not**
+in the repository: copy `supabase.key.example` to `supabase.key` and fill in the
+project URL and publishable (anon) key, or set `MANIKIN_SUPABASE_URL` and
+`MANIKIN_SUPABASE_KEY`. `supabase.key` is git-ignored and copied next to the exe
+at build time. Without credentials the wardrobe falls back to
+`catalog\wardrobe.json` when present.
+
 ## Disclaimer
 
 This project is an unofficial, independent community project. It has **no

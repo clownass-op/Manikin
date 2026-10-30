@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
@@ -53,6 +54,10 @@
     <!-- Not in the repo: build it with tools\build_wardrobe.py. Optional so a
          checkout without it still builds (the Wardrobe then says so). -->
     <Content Include="catalog\wardrobe.json" Condition="Exists('catalog\wardrobe.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Optional: wardrobe credentials. Never committed; see supabase.key.example. -->
+    <Content Include="supabase.key" Condition="Exists('supabase.key')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="ui\index.html">
