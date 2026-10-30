@@ -46,12 +46,23 @@ The exe lands in `bin\Manikin.exe`.
 
 ## Wardrobe catalog
 
-The item catalog is read from Supabase. Its credentials are deliberately **not**
-in the repository: copy `supabase.key.example` to `supabase.key` and fill in the
-project URL and publishable (anon) key, or set `MANIKIN_SUPABASE_URL` and
-`MANIKIN_SUPABASE_KEY`. `supabase.key` is git-ignored and copied next to the exe
-at build time. Without credentials the wardrobe falls back to
-`catalog\wardrobe.json` when present.
+The item catalog is read from Supabase with the publishable key in
+`supabase.key`, which is committed so a clone and every release work without any
+setup. `MANIKIN_SUPABASE_URL` and `MANIKIN_SUPABASE_KEY` override it, and
+`catalog\wardrobe.json` is used as an offline fallback when present.
+
+A publishable key is **not** a read-only key: what it is allowed to do is decided
+by grants and row level security on the table. Keep `swfs` read-only for the
+`anon` role so a published key cannot be used to insert rows:
+
+```sql
+revoke insert, update, delete, truncate on public.swfs from anon, authenticated;
+grant select on public.swfs to anon, authenticated;
+alter table public.swfs enable row level security;
+drop policy if exists swfs_read_only on public.swfs;
+create policy swfs_read_only on public.swfs
+  for select to anon, authenticated using (true);
+```
 
 ## Disclaimer
 
