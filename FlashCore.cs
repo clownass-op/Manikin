@@ -530,14 +530,10 @@ namespace ManikinApp
             // contain '&' or apostrophes ("Shield & Blade"), and an unescaped
             // one makes the whole invoke malformed so the call never lands.
             string invoke = BuildInvoke(function, args);
-            int n = args == null ? 0 : args.Length;
-            Dbg("Call " + function + " args=" + n + (n > 0 && args[0] != null ? " firstLen=" + args[0].Length : ""));
             try
             {
                 var res = _flash.CallFunction(invoke);
-                var node = XElement.Parse(res).FirstNode;
-                string val = node != null ? System.Net.WebUtility.HtmlDecode(node.ToString()) : "";
-                Dbg("Call " + function + " -> " + (val.Length > 200 ? val.Substring(0, 200) : val));
+                XElement.Parse(res);   // malformed XML means the invoke never landed
                 return true;
             }
             catch (Exception ex)
@@ -554,9 +550,7 @@ namespace ManikinApp
                     try
                     {
                         var res = _flash.CallFunction(invoke);
-                        var node = XElement.Parse(res).FirstNode;
-                        string val = node != null ? System.Net.WebUtility.HtmlDecode(node.ToString()) : "";
-                        Dbg("Call " + function + " (retry) -> " + (val.Length > 200 ? val.Substring(0, 200) : val));
+                        XElement.Parse(res);
                         return true;
                     }
                     catch (Exception ex2) { Dbg("Call " + function + " EX: " + ex2.Message); return false; }

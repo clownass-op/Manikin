@@ -1699,8 +1699,6 @@ namespace ManikinApp
             int w = args.Value<int>("w");
             int h = args.Value<int>("h");
             if (w <= 0 || h <= 0) { _flash.Visible = false; if (_gear != null && _gear.Visible) _gear.Hide(); if (_cos != null && _cos.Visible) _cos.Hide(); return; }
-            if (_flash.Bounds.X != x || _flash.Bounds.Y != y || _flash.Bounds.Width != w || _flash.Bounds.Height != h)
-                Dbg("PositionFlash " + x + "," + y + "," + w + "," + h);
             _flash.SetBounds(x, y, w, h);
             _flash.Visible = true;
             _flash.BringToFront();
@@ -1907,7 +1905,6 @@ namespace ManikinApp
                 if (!_cos.Visible)
                 {
                     try { if (!IsDisposed) _cos.Show(this); } catch { try { _cos.Show(); } catch { } }
-                    Dbg("cos show Visible=" + _cos.Visible);
                 }
                 // Always repaint: if the layered surface was dropped without
                 // the handle going away (Visible stays true, nothing logs),
@@ -1923,7 +1920,6 @@ namespace ManikinApp
                 if (!_mag.Visible)
                 {
                     try { if (!IsDisposed) _mag.Show(this); } catch { try { _mag.Show(); } catch { } }
-                    Dbg("mag show Visible=" + _mag.Visible + " flash=" + _flash.Bounds.ToString());
                     // Static button: paint once per show, not every tick.
                     _mag.SetState(AppDomain.CurrentDomain.BaseDirectory, true, false);
                 }
@@ -2561,7 +2557,6 @@ namespace ManikinApp
             _lastOverlayRectsFormCoords = rects;
             _lastDockHidden = dockHidden;
             _lastSheetHidden = sheetHidden;
-            Dbg("OverlayRects n=" + rects.Count + " dockHidden=" + dockHidden + " sheetHidden=" + sheetHidden + " flash=" + (_flash == null ? "-" : _flash.Bounds.ToString()) + " json=" + rectsJson);
             ApplyOverlayHoles();
             // Re-follow from the fresh rects so the rail nudges at once.
             FollowGear();
