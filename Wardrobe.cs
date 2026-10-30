@@ -44,10 +44,16 @@ namespace ManikinApp
         }
 
         // Credentials source: MANIKIN_SUPABASE_URL / MANIKIN_SUPABASE_KEY win,
-        // otherwise a supabase.key file next to the exe or one folder up (the
-        // repo root). That file is git-ignored, so a clone never carries the key.
+        // then an optional supabase.key next to the exe or one folder up, and
+        // finally the catalog compiled in below - so a clone needs no key file.
         static class Config
         {
+            // The catalog compiled into the app, so no key file is needed.
+            // This is a Supabase *publishable* key: only safe to publish while
+            // the swfs table is SELECT-only for the anon role (see README).
+            const string DefaultUrl = "https://zcuywyfxqvrmrmeivmcn.supabase.co/rest/v1/swfs";
+            const string DefaultKey = "sb_publishable_LaucQb2EgiRwu0q9_j8G9A_4abfiHXY";
+
             public static void Read(out string url, out string key)
             {
                 url = Env("MANIKIN_SUPABASE_URL");
@@ -77,6 +83,9 @@ namespace ManikinApp
                     catch { }
                     if (!string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(key)) return;
                 }
+                // Nothing overrode it: fall back to the built-in catalog.
+                if (string.IsNullOrEmpty(url)) url = DefaultUrl;
+                if (string.IsNullOrEmpty(key)) key = DefaultKey;
             }
 
             static string Env(string name)

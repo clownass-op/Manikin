@@ -46,10 +46,12 @@ The exe lands in `bin\Manikin.exe`.
 
 ## Wardrobe catalog
 
-The item catalog is read from Supabase with the publishable key in
-`supabase.key`, which is committed so a clone and every release work without any
-setup. `MANIKIN_SUPABASE_URL` and `MANIKIN_SUPABASE_KEY` override it, and
-`catalog\wardrobe.json` is used as an offline fallback when present.
+The item catalog is read from Supabase with the publishable key compiled into
+`Wardrobe.cs` (`Config.DefaultUrl` / `Config.DefaultKey`), so a clone needs no
+key file. `MANIKIN_SUPABASE_URL` and `MANIKIN_SUPABASE_KEY` override it, as does
+an optional `supabase.key` next to the exe (git-ignored, see
+`supabase.key.example`). `catalog\wardrobe.json` is used as an offline fallback
+when present.
 
 A publishable key is **not** a read-only key: what it is allowed to do is decided
 by grants and row level security on the table. Keep `swfs` read-only for the
