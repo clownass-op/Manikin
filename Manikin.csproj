@@ -51,6 +51,7 @@
     <Compile Include="AppForm.cs" />
     <Compile Include="Headless.cs" />
     <Compile Include="Wardrobe.cs" />
+    <Compile Include="CatalogSync.cs" />
     <!-- Not in the repo: build it with tools\build_wardrobe.py. Optional so a
          checkout without it still builds (the Wardrobe then says so). -->
     <Content Include="catalog\wardrobe.json" Condition="Exists('catalog\wardrobe.json')">

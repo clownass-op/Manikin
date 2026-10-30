@@ -105,6 +105,11 @@ namespace ManikinApp
         public string WardrobeQuery(string slot, string q, string access, int offset, int limit) { return Wardrobe.Query(slot, q, access, offset, limit); }
         public string BeginWardrobeFetch(string slot, string file, string gender, string dir) { return StartJob(() => Wardrobe.Fetch(slot, file, gender, dir)); }
 
+        // Settings > Catalog: diff aqcloset.com against our table, then insert.
+        public string BeginCatalogSyncPlan() { return StartJob(() => CatalogSync.Plan()); }
+        public string BeginCatalogSyncApply() { return StartJob(() => CatalogSync.Apply()); }
+        public string CatalogSyncProgress() { return CatalogSync.Progress(); }
+
         // "" while running; the job's JSON once done (then forgotten).
         public string JobResult(string id)
         {
@@ -1656,6 +1661,21 @@ namespace ManikinApp
         public static void Dbg(string line)
         {
             try { File.AppendAllText(DebugLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + Environment.NewLine); } catch { }
+        }
+
+        // Many lines in one write: a bulk insert logging per row would crawl
+        // otherwise (one file open per line).
+        public static void DbgMany(IEnumerable<string> lines)
+        {
+            if (lines == null) return;
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                string stamp = DateTime.Now.ToString("HH:mm:ss.fff");
+                foreach (var line in lines) sb.Append(stamp).Append(' ').Append(line).Append(Environment.NewLine);
+                if (sb.Length > 0) File.AppendAllText(DebugLog, sb.ToString());
+            }
+            catch { }
         }
 
         public static string GetLog()

@@ -18,8 +18,8 @@ namespace ManikinApp
     {
         // Supabase configuration. Neither value is in the repo: they come from
         // the environment or an ignored supabase.key file (see Config below).
-        static readonly string SupabaseUrl;
-        static readonly string SupabaseKey;
+        internal static readonly string SupabaseUrl;
+        internal static readonly string SupabaseKey;
 
         // HTTP client for Supabase API calls; null when no credentials exist.
         static readonly HttpClient SupabaseClient;
@@ -455,6 +455,26 @@ namespace ManikinApp
         static List<Item> Items
         {
             get { Preload(); return _load.Result; }
+        }
+
+        // Lower-case SWF paths we already hold: the diff key for CatalogSync.
+        internal static HashSet<string> ExistingFiles()
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var it in Items)
+                    if (!string.IsNullOrEmpty(it.File)) set.Add(it.File.ToLowerInvariant());
+            }
+            catch (Exception ex) { AppForm.Dbg("wardrobe: ExistingFiles failed: " + ex.Message); }
+            return set;
+        }
+
+        // Forget the cached catalog so the next query reloads it (after a sync).
+        internal static void Reload()
+        {
+            _load = null;
+            Preload();
         }
 
         // One page (offset, limit) of the rows for a slot, filtered by access

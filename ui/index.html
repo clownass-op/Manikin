@@ -93,6 +93,32 @@ body.preload .dock,body.preload .sheet{transition:none !important;}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:0 7px;}
 .g2 .full{grid-column:1/-1;}
 .monitor{font-size:10px;color:rgba(231,234,242,.7);line-height:1.45;font-family:Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:7px;}
+/* Monitor tab: the box always keeps room (a long catalog list must scroll
+   inside it, not push the panel out), and the panel scrolls if it must. */
+#p-monitor{overflow-y:auto;overflow-x:hidden;}
+#p-monitor .monitor{min-height:150px;}
+/* Catalog sync card: sits at the foot of the Monitor panel as a proper action
+   row (icon chip, title, live status line) so the box above stays the content. */
+.cat-card{display:flex;align-items:center;gap:9px;width:100%;flex-shrink:0;margin-top:8px;padding:9px 10px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:14px;color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background .14s,border-color .14s,transform .14s;}
+.cat-card:hover:not(:disabled){background:#1c2035;border-color:color-mix(in srgb,var(--accent-1) 55%,transparent);transform:translateY(-1px);}
+.cat-card:active:not(:disabled){transform:translateY(0);}
+.cat-card:disabled{cursor:default;opacity:.75;}
+.cat-ico{width:28px;height:28px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:linear-gradient(135deg,var(--a1),var(--a2));color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.3);}
+.cat-ico svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.cat-card.busy .cat-ico svg{animation:catspin .9s linear infinite;}
+@keyframes catspin{to{transform:rotate(-360deg);}}
+.cat-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}
+.cat-name{font-size:11.5px;font-weight:700;color:#fff;line-height:1.2;}
+.cat-sub{font-size:9.5px;color:#8b91a8;line-height:1.3;}
+.cat-go{color:#6f7590;font-size:16px;line-height:1;flex-shrink:0;transition:color .14s,transform .14s;}
+.cat-card:hover:not(:disabled) .cat-go{color:var(--accent-1);transform:translateX(2px);}
+.cat-btn{height:26px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:rgba(231,234,242,.85);font-size:10.5px;font-weight:700;letter-spacing:.2px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:background .13s,border-color .13s,color .13s;}
+.cat-btn:hover:not(:disabled){background:var(--sel-bg);border-color:var(--accent-2);color:var(--accent-1);}
+.cat-btn.solid{background:var(--grad);border-color:transparent;color:#fff;}
+.cat-btn.ghost{background:transparent;color:rgba(231,234,242,.6);}
+.cat-confirm{display:none;flex-shrink:0;margin-top:8px;background:linear-gradient(180deg,#1a1d2e,#141725);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:9px 10px;}
+#catalogSyncMsg{font-size:11px;color:#c9ccd4;white-space:pre-line;margin-bottom:7px;max-height:52px;overflow-y:auto;}
+.cat-actions{display:flex;gap:6px;}
 .bg-grid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:max-content;gap:4px;align-content:flex-start;overflow-y:auto;flex:1;min-height:0;padding:1px;}
 #bgGrid{gap:5px;}
 #bgGrid .bg-pick{position:relative;height:34px;padding:0;border:none;border-radius:8px;overflow:hidden;display:flex;align-items:flex-end;font-size:9px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7);transition:transform .12s,box-shadow .12s;}
@@ -392,6 +418,21 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
     <div class="sheet-inner">
       <div class="panel active" id="p-monitor">
         <div class="monitor" id="monitor">No character loaded yet.</div>
+        <div id="catalogSyncConfirm" class="cat-confirm">
+          <div id="catalogSyncMsg"></div>
+          <div class="cat-actions">
+            <button class="cat-btn solid" id="catalogSyncGo">Add them</button>
+            <button class="cat-btn ghost" id="catalogSyncNo">Cancel</button>
+          </div>
+        </div>
+        <button class="cat-card" id="btnCatalogSync" title="Find items on aqcloset.com that this database does not have">
+          <span class="cat-ico"><svg viewBox="0 0 16 16"><path d="M13.6 8A5.6 5.6 0 1 1 8 2.4a5.6 5.6 0 0 1 4 1.7"/><path d="M13.9 1.8v3.4h-3.4"/></svg></span>
+          <span class="cat-txt">
+            <span class="cat-name">Catalog sync</span>
+            <span class="cat-sub" id="catalogSyncInfo">Add items aqcloset.com has that we are missing</span>
+          </span>
+          <span class="cat-go">&#8250;</span>
+        </button>
       </div>
       <div class="panel" id="p-wardrobe">
         <input type="text" id="wdSearch" class="mini-search" placeholder="Search items…" aria-label="Search items" spellcheck="false">
@@ -539,6 +580,9 @@ function post(method, args) {
       case 'reset': return __fb.reset().then(() => null);
       case 'gear': return __fb.gear(args.rows).then(() => null);
       case 'downloadSwf': return __fb.setDownloadSwf(!!args.on).then(() => null);
+      case 'catalogSyncPlan': return __fb.beginCatalogSyncPlan().then(awaitJob);
+      case 'catalogSyncApply': return __fb.beginCatalogSyncApply().then(awaitJob);
+      case 'catalogSyncProgress': return __fb.catalogSyncProgress();
       case 'cosmetics': return __fb.cosmetics(args.state).then(() => null);
       case 'cosSeq': return __fb.cosmeticsSeq();
       case 'loadName': return __fb.loadNameRequest();
@@ -577,6 +621,8 @@ function __makeMockHost() {
     reportRect: () => ok(), flashCall: () => ok(), flashQuery: () => ok('1'),
     background: () => ok(), reset: () => ok(), gear: () => ok(), cosmetics: () => ok(),
     setDownloadSwf: () => ok(true),
+    beginCatalogSyncPlan: () => ok('mock-sync'), beginCatalogSyncApply: () => ok('mock-sync'),
+    catalogSyncProgress: () => ok('{"phase":"","done":0,"total":0,"missing":0}'),
     cosmeticsSeq: () => ok(0), loadNameRequest: () => ok(''), loadItem: () => ok(),
     dropItemBytes: () => ok(), jsLog: () => ok(),
     beginLoadChar: () => ok('mock-char'), beginDownloadAll: () => ok('mock-dl'),
@@ -1500,6 +1546,109 @@ function applyDlSwf() {
 try { dlSwfBox.checked = localStorage.getItem('fb.dlSwf') !== '0'; } catch (e) {}
 dlSwfBox.onchange = applyDlSwf;
 applyDlSwf();
+
+// Settings > Catalog: diff aqcloset.com against our Supabase table and add
+// the items we are missing. Scan first (Read-only), then confirm the insert.
+// Live list of the items the sync has added, written into the monitor box
+// itself (the one that otherwise shows character data).
+let catFeedWrote = false;
+function catFeed(p) {
+  const box = document.getElementById('monitor');
+  if (!box) return;
+  const recent = (p && p.recent) || [];
+  if (!recent.length) return;
+  box.textContent = recent.slice().reverse().join('\n');
+  box.scrollTop = 0;
+  catFeedWrote = true;
+}
+
+// Inline yes/no in the Settings panel. The browser's confirm() never shows in
+// this WebView2 host (default script dialogs are not surfaced), so it would
+// silently answer "no" - this asks on the page instead.
+function catAsk(message) {
+  return new Promise(resolve => {
+    const box = document.getElementById('catalogSyncConfirm');
+    const msgEl = document.getElementById('catalogSyncMsg');
+    const yes = document.getElementById('catalogSyncGo');
+    const no = document.getElementById('catalogSyncNo');
+    if (!box || !yes || !no) { resolve(false); return; }
+    msgEl.textContent = message;
+    box.style.display = 'block';
+    const finish = v => { box.style.display = 'none'; yes.onclick = null; no.onclick = null; resolve(v); };
+    yes.onclick = () => finish(true);
+    no.onclick = () => finish(false);
+  });
+}
+const catBtn = document.getElementById('btnCatalogSync');
+const catInfo = document.getElementById('catalogSyncInfo');
+const catBusy = on => { if (catBtn) { catBtn.disabled = on; catBtn.classList.toggle('busy', on); } };
+if (catBtn) catBtn.onclick = async () => {
+  catBusy(true);
+  catInfo.textContent = 'Scanning aqcloset.com for items we do not have (about a minute)...';
+  const monBox = document.getElementById('monitor');
+  const monPrev = monBox ? monBox.textContent : '';
+  catFeedWrote = false;
+  const monRestore = () => { if (monBox && !catFeedWrote) monBox.textContent = monPrev || 'No character loaded yet.'; };
+  if (monBox) monBox.textContent = 'Scanning aqcloset.com for items we do not have...';
+  const tick = setInterval(async () => {
+    try {
+      const p = JSON.parse(await post('catalogSyncProgress') || '{}');
+      if (p && p.phase) catInfo.textContent = p.phase + ' ' + p.done + (p.total ? '/' + p.total : '') + (p.missing ? ' - ' + p.missing + ' missing' : '');
+      catFeed(p);
+    } catch (e) {}
+  }, 700);
+  let plan = null;
+  try { plan = await post('catalogSyncPlan'); } catch (err) { plan = { ok: false, error: String(err) }; }
+  clearInterval(tick);
+  if (!plan || !plan.ok) {
+    catInfo.textContent = 'Scan failed: ' + ((plan && plan.error) || 'unknown');
+    monRestore();
+    catBusy(false);
+    return;
+  }
+  if (!plan.missing) {
+    catInfo.textContent = 'Up to date: all ' + plan.remote + ' items from aqcloset.com are already in the database.';
+    monRestore();
+    catBusy(false);
+    return;
+  }
+  // The whole list goes in the monitor box itself; the confirm below stays one
+  // short line so it can never push the box out of the panel.
+  const list = (plan.sample || []).map(s => (s.name || s.Name) + '  (' + (s.file || s.File) + ')');
+  if (monBox) {
+    monBox.textContent = 'aqcloset.com lists ' + plan.remote + ' items.\n' + plan.missing + ' of them are not in the database:\n\n'
+      + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '');
+    monBox.scrollTop = 0;
+  }
+  const go = await catAsk('Add ' + plan.missing + ' missing items to Supabase?');
+  if (!go) {
+    // Keep the list on screen: cancelled is exactly when you want to read it.
+    catInfo.textContent = 'Cancelled - ' + plan.missing + ' items were not added.';
+    catBusy(false);
+    return;
+  }
+  catInfo.textContent = 'Adding ' + plan.missing + ' items...';
+  const tick2 = setInterval(async () => {
+    try {
+      const p = JSON.parse(await post('catalogSyncProgress') || '{}');
+      if (p && p.phase) catInfo.textContent = p.phase + ' ' + p.done + (p.total ? '/' + p.total : '');
+      catFeed(p);
+    } catch (e) {}
+  }, 500);
+  let res = null;
+  try { res = await post('catalogSyncApply'); } catch (err) { res = { ok: false, error: String(err) }; }
+  clearInterval(tick2);
+  catBusy(false);
+  try { catFeed(JSON.parse(await post('catalogSyncProgress') || '{}')); } catch (e) {}
+  if (!res || !res.ok) {
+    catInfo.textContent = 'Added ' + ((res && res.added) || 0) + ', failed ' + ((res && res.failed) || 0) + ((res && res.error) ? ' - ' + res.error : '') + ' (see the Log tab)';
+    monRestore();
+    return;
+  }
+  catInfo.textContent = 'Added ' + res.added + ' items. Reloading the wardrobe...';
+  wdReset();
+  wdQuery();
+};
 
 const GEAR_TOGGLES = { weapon: 'hideWeapon', armor: 'hideArmor', helm: 'hideHelm', cape: 'hideCape', pet: 'hidePet', misc: 'hideMisc' };
 setInterval(async () => {
