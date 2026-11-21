@@ -497,6 +497,24 @@ namespace ManikinApp
         {
             byte[] bg;
             name = name ?? "";
+            // "grad:#RRGGBB": the Gradient scene acting as a colour-custom
+            // background - the picked colour drives its three glow stops
+            // (GradientScene rewrites the colours in the scene's ABC pool).
+            if (name.StartsWith("grad:", StringComparison.OrdinalIgnoreCase))
+            {
+                int glow;
+                byte[] template;
+                if (ParseHexColor(name.Substring(5), out glow) && _backgrounds.TryGetValue("Gradient", out template))
+                {
+                    try
+                    {
+                        byte[] scene = GradientScene.Build(template, glow);
+                        if (scene != null) Call("loadBackground", Convert.ToBase64String(scene));
+                    }
+                    catch (Exception ex) { Dbg("gradient scene failed: " + ex.Message); }
+                }
+                return;
+            }
             if (_backgrounds.TryGetValue(name, out bg))
                 try { Call("loadBackground", Convert.ToBase64String(bg)); } catch { }
             else if (name.Length == 7 && name[0] == '#')
@@ -507,6 +525,15 @@ namespace ManikinApp
             }
             else
                 Call("clearBackground");
+        }
+
+        // "#RRGGBB" (or "RRGGBB") -> 0xRRGGBB.
+        static bool ParseHexColor(string s, out int rgb)
+        {
+            rgb = 0;
+            s = (s ?? "").Trim().TrimStart('#');
+            return s.Length == 6 && int.TryParse(s, System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out rgb);
         }
 
         public void ResetFlash()

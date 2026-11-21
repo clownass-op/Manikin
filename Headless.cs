@@ -252,6 +252,7 @@ namespace ManikinApp
                 T("ui_gradient_background", false, UiGradientBackground),
                 T("ui_wardrobe_catalog", false, UiWardrobeCatalog),
                 T("live_wardrobe_try_on", true, LiveWardrobeTryOn),
+                T("live_wardrobe_random", true, LiveWardrobeRandom),
                 T("dagger_offhand_follows_unarmed", true, DaggerOffhandFollowsUnarmed),
                 T("ui_wardrobe_details_toggle", false, UiWardrobeDetails),
                 T("live_wardrobe_gender_switch", true, LiveWardrobeGender),
@@ -1093,18 +1094,39 @@ namespace ManikinApp
                 Expect(top.R < 20 && top.G < 22 && top.B < 30, "top corner should be near #0A0C14, got " + top);
                 Expect(low.B > top.B + 25 && low.B > low.R, "bottom centre should glow navy, got " + low + " (top " + top + ")");
             }
+
+            // The title bar follows the scene's falloff instead of a flat slab
+            // of the picked colour.
+            await Js("document.getElementById('matchTitle').checked=true;updateTitleBar();");
+            string bar = JsonConvert.DeserializeObject<string>(await Js("getComputedStyle(document.querySelector('.titlebar')).backgroundImage"));
+            Expect(bar.Contains("linear-gradient") && bar.Contains("rgb("), "title bar should take the gradient, got " + bar);
+            await Js("document.getElementById('matchTitle').checked=false;updateTitleBar();");
+
+            // ...and it is colour-custom: the background colour drives the glow.
+            await Js("setBgColor('#ff0000')");
+            await Task.Delay(600);
+            using (var b = Flash.Snapshot())
+            {
+                b.Save(Path.Combine(_snapDir, "bg_gradient_red.png"), ImageFormat.Png);
+                Color top = b.GetPixel(4, 4), low = b.GetPixel(b.Width / 2, b.Height - 4);
+                Expect(low.R > 200 && low.G < 60 && low.B < 60, "gradient should take the picked red, got " + low);
+                Expect(low.R > top.R + 80, "red gradient should glow at the bottom, got " + low + " (top " + top + ")");
+            }
+            await Js("setBgColor('#0a0c14')");
             await Js("project.bgScene='';sendBackground();");
         }
 
-        // Wardrobe panel (catalog\wardrobe.json): per-slot search, the four
-        // access filters, cleaned CDN paths, and the 200-row cap.
-        async Task<JObject> WardrobeQuery(string slot, string text, string access)
+        // Wardrobe panel (catalog\wardrobe.json): per-slot search, cleaned CDN
+        // paths, the pager and the randomiser. access is ignored now that the
+        // Free / Member / AC chips are gone; it stays so the call sites read
+        // the same.
+        async Task<JObject> WardrobeQuery(string slot, string text, string access = "all")
         {
             // The promise settles only when the page has its page of matching
             // rows (wdGo polls while the C# catalog is still loading from
             // Supabase: a cold ~51-page load can legitimately take a while).
             await JsAwait("(wd.slot=" + JsonConvert.ToString(slot) + ", wd.q=" + JsonConvert.ToString(text)
-                + ", wd.access=" + JsonConvert.ToString(access) + ", wdQuery())", 180000);
+                + ", wdQuery())", 180000);
             return JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(wd.res)")));
         }
 
@@ -1118,11 +1140,52 @@ namespace ManikinApp
             Expect((bool)all["ok"], "catalog query failed: " + all["error"]);
             Expect((int)all["inSlot"] > 10000, "helm count " + all["inSlot"]);
             Expect(HasItem(all, "Mecha Leprechaun Helm"), "search 'leprechaun' missed Mecha Leprechaun Helm");
-            Expect(HasItem(await WardrobeQuery("Helm", "leprechaun", "ac"), "Mecha Leprechaun Helm"), "AC filter dropped an AC item");
-            var freeH = await WardrobeQuery("Helm", "leprechaun", "free");
-            var memH = await WardrobeQuery("Helm", "leprechaun", "member");
-            Expect(!HasItem(freeH, "Mecha Leprechaun Helm"), "Free filter kept an AC item");
-            Expect((int)all["total"] == (int)freeH["total"] + (int)memH["total"], "access partition mismatch");
+            // The Free / Member / AC chips are gone (row badges stay) and the
+            // randomiser sits on the section row instead.
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!document.getElementById('wdAccess') && !!document.getElementById('wdRandom') && !document.getElementById('wdRandom').disabled")),
+                "randomiser button missing");
+            // One magnifier only: the pane's generic search field paints an icon
+            // in its background, so this panel must keep that switched off and
+            // draw just its own SVG.
+            Expect(JsonConvert.DeserializeObject<string>(await Js("getComputedStyle(document.getElementById('wdSearch')).backgroundImage")) == "none",
+                "search field still paints a second magnifier");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("(() => { const s = document.getElementById('wdSearch').getBoundingClientRect(); const r = document.getElementById('wdRandom').getBoundingClientRect(); return Math.round(s.height) === Math.round(r.height) && parseFloat(getComputedStyle(document.getElementById('wdRandom')).borderTopLeftRadius) * 2 >= r.width - 1; })()")),
+                "search row is not one height / the roll button is not a round key");
+            // The panel stays the sheet's own width; the redesign is spacing and
+            // rows, not size. Nothing may overflow horizontally either.
+            double w = JsonConvert.DeserializeObject<double>(await Js("document.getElementById('sheet').getBoundingClientRect().width"));
+            Expect(w <= 260, "wardrobe panel grew to " + w + "px");
+            string wide = JsonConvert.DeserializeObject<string>(await Js("(() => { const p = document.getElementById('p-wardrobe'); const kids = [...p.children].map(c => (c.id || c.className.split(' ')[0]) + ':' + c.scrollWidth + '/' + c.clientWidth); return p.scrollWidth + '/' + p.clientWidth + ' ' + kids.join(' '); })()"));
+            Expect(wide.Split(' ')[0].Split('/')[0] == wide.Split(' ')[0].Split('/')[1], "wardrobe panel overflows horizontally: " + wide);
+            // The trigger is icon-only too: it shows the open section's art and
+            // keeps the name in its tooltip / accessible name.
+            string pill = JsonConvert.DeserializeObject<string>(await Js("document.getElementById('wdPickBtn').textContent.trim()"));
+            Expect(pill.Length == 0, "section trigger still shows text: '" + pill + "'");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("(() => { const b = document.getElementById('wdPickBtn'); const a = (b.getAttribute('aria-label') || '').trim(); const r = b.getBoundingClientRect(); return a.length > 0 && a === b.title && !!document.getElementById('wdPickIcon').firstChild && !b.querySelector('svg.chev') && Math.round(r.width) === Math.round(r.height) && parseFloat(getComputedStyle(b).borderTopLeftRadius) * 2 >= r.width - 1; })()")),
+                "section trigger is unlabelled, shows no icon, or is not a round key");
+            Expect(JsonConvert.DeserializeObject<int>(await Js("document.querySelectorAll('#wdPickMenu .wd-pick-item').length")) == 7,
+                "section dropdown does not list every section");
+            // Icon-only: every tile is labelled for screen readers (and on
+            // hover) but carries no text node of its own.
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("[...document.querySelectorAll('#wdPickMenu .wd-pick-item')].every(b => (b.getAttribute('aria-label') || '').trim().length > 0 && !b.querySelector('.wd-pick-name') && b.textContent.trim() === '')")),
+                "a section tile is unlabelled or still shows text");
+            await Js("document.getElementById('wdPickBtn').click()");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!document.getElementById('wdPickMenu').hidden")), "section dropdown did not open");
+            // The menu is the trigger's own key: same width, same left edge, so
+            // it reads as the round button unrolling downwards.
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("(() => { const m = document.getElementById('wdPickMenu').getBoundingClientRect(); const b = document.getElementById('wdPickBtn').getBoundingClientRect(); const p = document.getElementById('p-wardrobe').getBoundingClientRect(); return m.left >= p.left - 1 && m.right <= p.right + 1 && Math.abs(m.width - b.width) <= 1 && Math.abs(m.left - b.left) <= 1; })()")),
+                "section dropdown is not sized and aligned to the trigger");
+            // Icons only, stacked: one row per section (not a grid), all the same
+            // width, so the palette reads as a vertical rail.
+            string grid = await Js("(() => { const m = document.getElementById('wdPickMenu'); const it = [...m.querySelectorAll('.wd-pick-item')]; return getComputedStyle(m).display + ' w=' + Math.round(m.getBoundingClientRect().width) + ' rows=' + it.map(b => Math.round(b.getBoundingClientRect().top) + '/' + Math.round(b.getBoundingClientRect().left)).join(','); })()");
+            Expect(JsonConvert.DeserializeObject<int>(await Js("new Set([...document.querySelectorAll('#wdPickMenu .wd-pick-item')].map(b => Math.round(b.getBoundingClientRect().top))).size")) == 7,
+                "section palette is not one row per section: " + grid);
+            Expect(JsonConvert.DeserializeObject<int>(await Js("new Set([...document.querySelectorAll('#wdPickMenu .wd-pick-item')].map(b => Math.round(b.getBoundingClientRect().left) + 'x' + Math.round(b.getBoundingClientRect().width))).size")) == 1,
+                "section rows are not evenly stacked: " + grid);
+            await Task.Delay(300);   // let the overlay finish painting
+            await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_picker.png"));
+            await Js("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdPickMenu').hidden")), "Escape did not close the dropdown");
             var dk = await WardrobeQuery("Armor", "legion doomknight", "all");
             Expect(dk["items"].Any(i => (string)i["f"] == "LegionDoomKnightr3.swf"), "Legion DoomKnight path missing or not cleaned: " + dk["items"].ToString(Formatting.None));
             // Paging: WD_PAGE = 50 rows per page; the bottom pager strip flips
@@ -1143,9 +1206,9 @@ namespace ManikinApp
             string lbl2 = JsonConvert.DeserializeObject<string>(await Js("(document.querySelector('#wdPager .page-label') || {}).textContent || ''"));
             Expect(lbl2 == "Page 2 / " + pages + " · " + total, "page 2 label '" + lbl2 + "'");
             await JsAwait("wdGo(1)");
-            Expect(await rowCount() == Math.Min(50, total), "back on page 1 rendered " + await rowCount() + " rows");
-            await WardrobeQuery("Helm", "", "all");
+            Expect(await rowCount() == Math.Min(50, total), "back on page 1 rendered " + await rowCount() + " rows");            await WardrobeQuery("Helm", "", "all");
             Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdPager').hidden === false")), "pager hidden on a long list");
+            await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_layout.png"));
             await Js("closeSheet()");
         }
 
@@ -1182,6 +1245,24 @@ namespace ManikinApp
             Expect(JsonConvert.DeserializeObject<bool>(await Js("!project.slots.Helm")), "Take off left the helm in the slot");
             await WaitState(s => s["helm"] == null || s["helm"].Type != JTokenType.Object || !(bool)s["helm"]["v"], "helm hidden after Take off");
             await Js("closeSheet()");
+        }
+
+        // Randomiser: one roll puts an item on in every slot it can fill, and a
+        // slot whose pick fails to fetch is rolled again instead of ending the
+        // roll.
+        async Task LiveWardrobeRandom()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('wardrobe')");
+            await WardrobeQuery("Helm", "");          // waits out a cold catalog load
+            await JsAwait("wdRandomize()", 180000);
+            var slots = JObject.Parse(JsonConvert.DeserializeObject<string>(await Js(
+                "JSON.stringify(Object.fromEntries(['Helm','Armor','Cape','Weapon','Pet','Misc'].map(t => [t, (project.slots[t] && project.slots[t].file) || ''])))")));
+            int filled = slots.Properties().Count(p => !string.IsNullOrEmpty((string)p.Value));
+            Expect(filled >= 5, "randomiser filled " + filled + "/6 slots: " + slots.ToString(Formatting.None));
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdRandom').disabled === false")), "randomiser stayed disabled");
+            Snap("wardrobe_random");
+            await JsAwait("(async () => { for (const t of ['Helm','Armor','Cape','Weapon','Pet','Misc']) { wd.slot = t; await wdTakeOff(); } wd.slot = 'All'; closeSheet(); })()", 60000);
         }
 
         // Unequipping a dual (Dagger) set - Take off, or the hide-weapon

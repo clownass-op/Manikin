@@ -48,6 +48,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="FlashCore.cs" />
     <Compile Include="Downloads.cs" />
+    <Compile Include="GradientScene.cs" />
+    <Compile Include="SwfStore.cs" />
     <Compile Include="AppForm.cs" />
     <Compile Include="Headless.cs" />
     <Compile Include="Wardrobe.cs" />

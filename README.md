@@ -12,8 +12,8 @@ game's backgrounds, at whatever size you want to check it at.
 | | |
 |---|---|
 | **Character** | Load any existing character by name, or drop your own item SWFs onto the gear slots |
-| **Wardrobe** | Search ~50,000 catalog items by slot, filter Free / Member / AC, and try them on (Keep or Revert) |
-| **Backgrounds** | All game scenes plus a custom solid colour and hex input |
+| **Wardrobe** | Search ~50,000 catalog items by slot, put them on in one click, or roll a whole random outfit |
+| **Backgrounds** | All game scenes plus a custom solid colour and hex input; the Gradient scene takes the picked colour |
 | **Size** | Independent scale for character, pet and background |
 | **Dyes** | Full HSV picker for the six dye channels, plus a theme colour for the app itself |
 | **Dagger mode** | Force dual-wield so you can check how a split weapon set sits in both hands |
@@ -65,6 +65,18 @@ drop policy if exists swfs_read_only on public.swfs;
 create policy swfs_read_only on public.swfs
   for select to anon, authenticated using (true);
 ```
+
+## CharPage loader store
+
+Loading a character by name used to download its gear SWFs into the folder next
+to the exe. They now live in Supabase instead, in the `char_swfs` table (path,
+name, linkage, bytes, size): the loader reads a row first and only a miss fetches
+from the game CDN (storing name and linkage with it). The bytes go straight to
+the Flash player, so a character load writes nothing to the device.
+
+Run `tools/char_swfs.sql` once in the Supabase SQL editor to create the table and
+its policies. Without it the loader still works - it re-fetches from the CDN each
+time and logs that the store is missing.
 
 ## Disclaimer
 

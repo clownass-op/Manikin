@@ -313,19 +313,67 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .dock.hidden{opacity:0;pointer-events:none;}
 @keyframes panelIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 .sheet .panel.active{animation:panelIn .24s cubic-bezier(.2,.8,.2,1) both;}
-/* Wardrobe panel: catalog search, slot icons, access filter, item list and
-   the try-on card. Taller than the other panels so the list has room. */
-.sheet.wardrobe{height:min(640px,calc(100% - 16px));}
-.wd-slots{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;flex-shrink:0;}
-.wd-slot{height:34px;border-radius:11px;background:#141725;border:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;cursor:pointer;}
-.wd-slot img{width:20px;height:20px;object-fit:contain;}
-.wd-slot:hover{background:#232742;border-color:rgba(255,255,255,.14);}
-.wd-slot.on{background:color-mix(in srgb,var(--accent-3) 40%,#141725);border-color:var(--accent-1);box-shadow:none;}
-.wd-access{flex-shrink:0;}
-.wd-count{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:8px 2px 4px;font-size:10.5px;font-weight:600;color:color-mix(in srgb,var(--accent-1) 35%,#a3a9c0);flex-shrink:0;}
-.wd-count #wdCount{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wd-count.err #wdCount{color:var(--accent-1);}
-.wd-tools{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+/* Wardrobe panel: catalog search, section picker, item list and the try-on
+   card. It keeps the sheet's own 236px width: the header carries the section
+   total, the tool row carries the section name or the match count, and the
+   rows are a two-line block with their badges on the right, so nothing needs
+   to be wider - only the vertical rhythm has to be tight. */
+.sheet.wardrobe{height:min(650px,calc(100% - 16px));}
+
+/* Row 1: search field with the roll button at its end. */
+.wd-find{position:relative;display:flex;align-items:center;gap:7px;flex-shrink:0;margin-bottom:8px;}
+/* ONE magnifier: the pane paints its own icon in the field's background, so
+   this panel switches that off and keeps only the SVG drawn below (it can
+   take the accent on focus, which a background image cannot). */
+.sheet .panel .wd-find input[type=text].mini-search{flex:1;min-width:0;height:32px;margin:0;padding:0 12px 0 30px;font-size:11px;line-height:32px;border-radius:999px;background:#11141f;background-image:none;border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 2px rgba(0,0,0,.4);color:#e7eaf2;font-family:inherit;letter-spacing:.1px;transition:border-color .15s,box-shadow .15s,background .15s;}
+.sheet .panel .wd-find input[type=text].mini-search::placeholder{color:#6a7290;}
+.sheet .panel .wd-find input[type=text].mini-search:focus{background:#151927;border-color:color-mix(in srgb,var(--accent-1) 62%,transparent);box-shadow:inset 0 1px 2px rgba(0,0,0,.4),0 0 0 3px color-mix(in srgb,var(--accent-1) 18%,transparent);}
+.wd-find-ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:13px;height:13px;fill:none;stroke:#7c8399;stroke-width:1.7;stroke-linecap:round;pointer-events:none;transition:stroke .15s;}
+.wd-find:focus-within .wd-find-ico{stroke:var(--accent-1);}
+
+/* Row 2: the section picker, then body type + details. */
+.wd-bar{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-bottom:7px;}
+.wd-pick{position:relative;flex-shrink:0;}
+/* Section trigger: a round icon key, no text and no arrow - the slot art is
+   the label, and the tooltip carries the name for anyone who needs it. */
+.wd-pick-btn{width:30px;height:30px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:50%;background:#1b1f30;border:1px solid rgba(255,255,255,.07);color:#cfd4e6;font:inherit;cursor:pointer;transition:background .14s,border-color .14s,color .14s;}
+.wd-pick-btn .ico{display:flex;align-items:center;justify-content:center;}
+.wd-pick-btn .ico img{width:17px;height:17px;object-fit:contain;}
+.wd-pick-btn .ico svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;}
+.wd-pick-btn:hover,.wd-pick.open .wd-pick-btn{background:#232842;border-color:rgba(255,255,255,.18);color:#fff;}
+.wd-pick.on .wd-pick-btn{background:#1b1f30;border-color:color-mix(in srgb,var(--accent-1) 45%,rgba(255,255,255,.07));}
+/* Dropdown: the section keys slide out of the trigger itself, so the menu is
+   exactly the button's own 30px circle wide - one icon per row, same left edge,
+   same width - reading as the key unrolling downward rather than a floating box.
+   Every icon sits on the same plate, so the catalog art reads as one set;
+   "all items" closes its group with a hairline and the open section is the
+   only plate with an accent edge. */
+.wd-pick-menu{position:absolute;top:34px;left:0;z-index:30;width:30px;display:flex;flex-direction:column;gap:2px;padding:3px;background:rgba(23,27,43,.9);backdrop-filter:blur(12px) saturate(1.15);border:1px solid rgba(255,255,255,.09);border-radius:13px;box-shadow:0 20px 40px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06);animation:wdPop .13s ease-out;}
+.wd-pick-menu[hidden]{display:none;}
+.wd-pick-menu::before{content:'';position:absolute;top:-5px;left:10px;width:10px;height:10px;transform:rotate(45deg);background:rgba(23,27,43,.9);border-left:1px solid rgba(255,255,255,.09);border-top:1px solid rgba(255,255,255,.09);border-top-left-radius:2px;}
+@keyframes wdPop{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+/* Every section icon sits in the same coin, so seven pieces of catalog art of
+   wildly different weight read as one set. The selected coin is the only one
+   that turns - ringed and lit in the accent. */
+.wd-pick-item{position:relative;height:28px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:transparent;cursor:pointer;color:#aab2c8;transition:background .12s,color .12s;}
+.wd-pick-item.all{margin-bottom:5px;}
+.wd-pick-item.all::after{content:'';position:absolute;left:2px;right:2px;bottom:-4px;height:1px;background:rgba(255,255,255,.08);}
+.wd-well{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 28%,rgba(255,255,255,.11),rgba(255,255,255,.028) 72%);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 1px 2px rgba(0,0,0,.28);transition:background .13s,box-shadow .13s,transform .13s;}
+.wd-well img{width:15px;height:15px;object-fit:contain;}
+.wd-well > svg.wd-slot-ico{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;}
+.wd-pick-item:hover{color:#fff;}
+.wd-pick-item:hover .wd-well{background:radial-gradient(circle at 50% 28%,rgba(255,255,255,.19),rgba(255,255,255,.05) 72%);transform:translateY(-1px);}
+.wd-pick-item.on{color:#fff;}
+.wd-pick-item.on .wd-well{background:radial-gradient(circle at 50% 28%,color-mix(in srgb,var(--accent-3) 52%,#2A3048),color-mix(in srgb,var(--accent-3) 30%,#1A1E2E));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-1) 60%,transparent),0 0 14px color-mix(in srgb,var(--accent-1) 38%,transparent),inset 0 1px 0 rgba(255,255,255,.2);}
+/* Roll: the same round key as the section picker, so the two buttons on the
+   panel read as a pair instead of one pill and one squarish tab. */
+.wd-rand{flex:none;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;border-radius:50%;background:#1b1f30;border:1px solid rgba(255,255,255,.09);color:#c7cee4;cursor:pointer;font:inherit;transition:background .14s,border-color .14s,color .14s,transform .1s;}
+.wd-rand svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.wd-rand:hover{background:color-mix(in srgb,var(--accent-3) 26%,#1b1f30);border-color:color-mix(in srgb,var(--accent-1) 55%,transparent);color:#fff;}
+.wd-rand:active{transform:scale(.94);}
+.wd-rand:disabled{opacity:.45;cursor:default;}
+.wd-tools{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:auto;}
+.sheet-sub.err{color:var(--accent-1);}
 .wd-gender{display:flex;gap:1px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:2px;}
 .wd-g{width:20px;height:18px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#8b91a8;cursor:pointer;user-select:none;}
 .wd-g:hover{color:#fff;}
@@ -334,17 +382,21 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .wd-info{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#141725;border:1px solid rgba(255,255,255,.08);color:#8b91a8;font:italic 700 12px/1 Georgia,'Times New Roman',serif;cursor:pointer;user-select:none;}
 .wd-info:hover{color:#fff;border-color:rgba(255,255,255,.2);}
 .wd-info.on{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border-color:transparent;color:#fff;}
-.wd-card.slim{flex-direction:row;align-items:center;gap:6px;padding:6px 6px 6px 11px;border-radius:13px;}
-.wd-card.slim .t{flex:1;min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.wd-card.slim .action-btn{height:24px;padding:0 9px;font-size:10px;border-radius:9px;flex:none;}
+.wd-card.slim{flex-direction:row;align-items:center;gap:7px;padding:6px 6px 6px 10px;border-radius:12px;}
+.wd-card.slim .t{flex:1;min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-card.slim .action-btn{height:26px;padding:0 10px;font-size:10.5px;border-radius:9px;flex:none;}
 .wd-card.slim .action-btn.primary{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));border:none;color:#fff;}
-.wd-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin:0 -4px;padding:0 4px;}
-.wd-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:11px;border:1px solid transparent;cursor:pointer;flex-shrink:0;}
+.wd-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin:0;padding:0 0 2px;}
+.wd-list::-webkit-scrollbar{width:6px;}
+.wd-list::-webkit-scrollbar-track{background:transparent;}
+.wd-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px;}
+.wd-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22);}
+.wd-row{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:11px;border:1px solid transparent;cursor:pointer;flex-shrink:0;}
 .wd-row:hover{background:#171a29;border-color:rgba(255,255,255,.08);}
 .wd-row.try{background:color-mix(in srgb,var(--accent-3) 22%,#0E1018);border-color:var(--accent-1);}
 .wd-row.worn{background:#141725;border-color:rgba(255,255,255,.12);}
-.wd-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
-.wd-n{font-size:11.5px;font-weight:600;color:#E7EAF2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wd-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.wd-n{font-size:12px;font-weight:600;color:#E7EAF2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wd-s{font-size:10px;color:#7C8399;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .wd-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;}
 .wd-st{font-size:9px;font-weight:700;letter-spacing:.3px;color:color-mix(in srgb,var(--accent-1) 70%,#fff);white-space:nowrap;}
@@ -355,11 +407,11 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .wd-more{font-size:10px;color:#7C8399;text-align:center;padding:8px 4px;flex-shrink:0;line-height:1.4;}
 .wd-card{flex-shrink:0;margin-top:8px;background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:10px 11px;display:flex;flex-direction:column;gap:5px;}
 .wd-card[hidden]{display:none;}
-.wd-pager{flex-shrink:0;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:8px;}
+.wd-pager{flex-shrink:0;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;}
 .wd-pager[hidden]{display:none;}
-.wd-pager .action-btn{height:26px;padding:0 12px;font-size:11px;border-radius:9px;flex:none;}
+.wd-pager .action-btn{height:28px;padding:0 13px;font-size:11.5px;border-radius:10px;flex:none;}
 .wd-pager .page-btn[disabled],.wd-pager .action-btn[disabled]{opacity:.35;}
-.wd-pager .page-label{font-size:11px;color:#9aa3bd;white-space:nowrap;}
+.wd-pager .page-label{font-size:10.5px;color:#9aa3bd;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .wd-card .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
 .wd-card .t{font-size:12.5px;font-weight:700;color:#fff;line-height:1.25;}
 .wd-card .wd-st{margin-top:2px;}
@@ -435,16 +487,20 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
         </button>
       </div>
       <div class="panel" id="p-wardrobe">
-        <input type="text" id="wdSearch" class="mini-search" placeholder="Search items…" aria-label="Search items" spellcheck="false">
-        <div class="wd-slots" id="wdSlots"></div>
-        <div class="preset-row wd-access" id="wdAccess">
-          <div class="preset-chip on" data-a="all">All</div>
-          <div class="preset-chip" data-a="free">Free</div>
-          <div class="preset-chip" data-a="member">Member</div>
-          <div class="preset-chip" data-a="ac">AC</div>
+        <div class="wd-find">
+          <svg class="wd-find-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.3"/><path d="M10.1 10.1L14 14"/></svg>
+          <input type="text" id="wdSearch" class="mini-search" placeholder="Search items…" aria-label="Search items" spellcheck="false">
+          <button type="button" class="wd-rand" id="wdRandom" title="Put on random items" aria-label="Put on random items">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6h2.7l6.6 6.8h1.9"/><path d="M2 11.4h2.7l6.6-6.8h1.9"/><path d="M11.6 2.5l1.9 2.1-1.9 2.1"/><path d="M11.6 9.3l1.9 2.1-1.9 2.1"/></svg>
+          </button>
         </div>
-        <div class="wd-count" id="wdCountRow">
-          <span id="wdCount"></span>
+        <div class="wd-bar">
+          <div class="wd-pick" id="wdPick">
+            <button type="button" class="wd-pick-btn" id="wdPickBtn" aria-haspopup="true" aria-expanded="false" title="All items">
+              <span class="ico" id="wdPickIcon"></span>
+            </button>
+            <div class="wd-pick-menu" id="wdPickMenu" hidden></div>
+          </div>
           <div class="wd-tools">
             <div class="wd-gender" id="wdGender" title="Body type"><div class="wd-g" data-g="M">M</div><div class="wd-g" data-g="F">F</div></div>
             <div class="wd-info" id="wdInfo" title="Show item details" role="button" aria-label="Show item details">i</div>
@@ -587,10 +643,14 @@ function post(method, args) {
       case 'cosSeq': return __fb.cosmeticsSeq();
       case 'loadName': return __fb.loadNameRequest();
       case 'loadItem': return __fb.loadItem(args.ItemType, args.ItemFile, args.WeaponType || '', args.Link || '').then(() => null);
+      case 'loadItemB64': return __fb.loadItemB64(args.ItemType, args.ItemFile, args.b64, args.WeaponType || '', args.Link || '').then(() => null);
+      case 'charItem': return __fb.beginCharItem(args.type, args.file, args.gender || 'F', args.name || '').then(awaitJob);
       case 'dropItemBytes': return __fb.dropItemBytes(args.itemType, args.fileName, args.b64).then(() => null);
       case '__jsLog': return __fb.jsLog(JSON.stringify(args || {})).then(() => null);
       case 'loadChar': return __fb.beginLoadChar(args.name).then(awaitJob);
       case 'downloadAll': return __fb.beginDownloadAll(JSON.stringify(args.vars), args.dir).then(awaitJob);
+      case 'downloadAllStart': return __fb.beginDownloadAll(JSON.stringify(args.vars), args.dir);
+      case 'charLoadPoll': return __fb.charLoadPoll(args.id);
       case 'wardrobeQuery': return __fb.wardrobeQuery(args.slot, args.q || '', args.access || 'all', args.offset || 0, args.limit || 200);
       case 'wardrobeFetch': return __fb.beginWardrobeFetch(args.slot, args.file, args.gender || 'F', args.dir || '').then(awaitJob);
       case 'gearClicks': return __fb.takeGearClicks();
@@ -623,9 +683,11 @@ function __makeMockHost() {
     setDownloadSwf: () => ok(true),
     beginCatalogSyncPlan: () => ok('mock-sync'), beginCatalogSyncApply: () => ok('mock-sync'),
     catalogSyncProgress: () => ok('{"phase":"","done":0,"total":0,"missing":0}'),
-    cosmeticsSeq: () => ok(0), loadNameRequest: () => ok(''), loadItem: () => ok(),
+    cosmeticsSeq: () => ok(0), loadNameRequest: () => ok(''), loadItem: () => ok(), loadItemB64: () => ok(),
+    beginCharItem: () => ok('mock-char'),
     dropItemBytes: () => ok(), jsLog: () => ok(),
     beginLoadChar: () => ok('mock-char'), beginDownloadAll: () => ok('mock-dl'),
+    charLoadPoll: () => ok(JSON.stringify({ done: true, ok: true, total: 0, items: [] })),
     jobResult: id => ok(id === 'mock-dl' ? JSON.stringify({ items: [] })
       : JSON.stringify({ ok: false, error: 'Preview mode \u2013 not connected to the Manikin app.' })),
     takeGearClicks: () => ok('[]'), copyLog: () => ok(true),
@@ -801,9 +863,11 @@ async function runSendHost() {
   for (const t of SLOT_TYPES) {
     const s = activeEntry(t);
     if (s && s.enabled && s.path) {
+      if (__worn[t] === wornKey(s)) continue;   // already on the player
       await showSlot(t);
-      await post('loadItem', slotMsg(t, s));
+      await postSlot(t, s);
     } else if (__everLoaded) {
+      if (__worn[t] === undefined) continue;    // already off the player
       await clearSlot(t);
     }
   }
@@ -821,6 +885,20 @@ function slotMsg(t, s) {
   }
   return msg;
 }
+// One slot -> player. Loader entries carry the SWF bytes from Supabase; the
+// wardrobe and drag-drop entries still point at a file. The player gets bytes
+// either way.
+// What the player is already showing per slot. Without this the sendHost after
+// a streamed load reloads every item a second time (a visible re-pop).
+const __worn = {};
+function wornKey(s) { return (s.path || '') + '|' + (s.link || '') + '|' + (s.b64 || '').length; }
+async function postSlot(t, s) {
+  const r = s.b64
+    ? await post('loadItemB64', Object.assign({ b64: s.b64 }, slotMsg(t, s)))
+    : await post('loadItem', slotMsg(t, s));
+  __worn[t] = wornKey(s);
+  return r;
+}
 async function slotFlag(t, hide) {
   const v = hide ? 'True' : 'False';
   switch (t) {
@@ -834,7 +912,7 @@ async function slotFlag(t, hide) {
   }
 }
 async function showSlot(t) { await slotFlag(t, false); }
-async function clearSlot(t) { await slotFlag(t, true); }
+async function clearSlot(t) { await slotFlag(t, true); delete __worn[t]; }
 async function applyExtraState() {
   sendBackground();
   await post('flashCall', { method: 'loadResize', params: [String(project.scale / 100)] });
@@ -864,9 +942,33 @@ function updateUIVisibility() {
   post('overlaysHidden', { hidden: !!project.hideUI });
   flashCall('showUserName', [project.nameShow && project.nameText && !project.hideUI ? 'True' : 'False']);
 }
+// The Gradient scene's three stops, mirroring GradientScene.cs: the picked
+// colour is the glow (lifted when it is very dark so it still blooms), and the
+// mid/base stops are 48% / 24% of it.
+function gradientStops(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return null;
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  const max = Math.max(r, g, b);
+  if (!max) return null;
+  const gain = max < 74 ? 74 / max : 1;
+  const lift = v => Math.min(255, Math.round(v * gain));
+  const hx = (rr, gg, bb) => '#' + [rr, gg, bb].map(v => v.toString(16).padStart(2, '0')).join('');
+  const rim = [lift(r), lift(g), lift(b)];
+  const f = k => Math.round(k * 0.48), base = k => Math.round(k * 0.24);
+  return {
+    rim: hx(rim[0], rim[1], rim[2]),
+    mid: hx(f(rim[0]), f(rim[1]), f(rim[2])),
+    base: hx(base(rim[0]), base(rim[1]), base(rim[2]))
+  };
+}
 function sendBackground() {
-  post('background', { name: project.bgScene || project.bgColor });
-  post('themeColor', { color: project.bgColor });
+  // The Gradient scene is colour-custom: the picked colour drives its stops.
+  const name = project.bgScene === 'Gradient' ? 'grad:' + project.bgColor : (project.bgScene || project.bgColor);
+  post('background', { name });
+  // The window surround takes the scene's dark base, not the raw pick: a flat
+  // bright colour beside the scene's falloff is what looked off.
+  const stops = project.bgScene === 'Gradient' ? gradientStops(project.bgColor) : null;
+  post('themeColor', { color: stops ? stops.base : project.bgColor });
   document.getElementById('previewBox').style.background = project.bgColor;
   document.querySelector('.stage').style.background = project.bgColor;
   updateBgPicks();
@@ -1011,7 +1113,7 @@ async function openTab(name) {
   const _b = document.querySelector('.dock-btn[data-t="' + name + '"]'), _i = document.getElementById('sheetIco');
   if (_b && _i) _i.innerHTML = _b.innerHTML;
   sheetEl.style.setProperty('--h', themeHue);
-  const _s = document.getElementById('sheetSub'); if (_s) _s.textContent = TAB_SUBS[name] || '';
+  const _s = document.getElementById('sheetSub'); if (_s) { _s.textContent = TAB_SUBS[name] || ''; _s.classList.remove('err'); }
   document.querySelectorAll('.dock-btn').forEach(b => b.classList.toggle('active', b.dataset.t === name));
   document.querySelectorAll('.sheet .panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
   sheetEl.classList.toggle('tall', TALL_TABS.indexOf(name) >= 0);
@@ -1178,12 +1280,13 @@ async function applyVars(name, vars, dir) {
   renderGear();
   monitorEl.textContent = formatVars(vars);
   setStatus('Downloading item SWFs...');
-  const dl = await post('downloadAll', { vars, dir });
-  if (!dl || !dl.items) { setStatus('Failed: ' + ((dl && dl.__postError) || 'no download reply')); return; }
   const pbar = document.getElementById('pfill');
   const ptext = document.getElementById('ptext');
   const prog = document.getElementById('progress');
   prog.classList.add('show');
+  // Streamed: each SWF is equipped the moment its row resolves.
+  const dl = await streamItems(name, vars, dir, pbar, ptext);
+  if (!dl || !dl.items) { setStatus('Failed: no download reply'); return; }
   progressHandler = p => {
     const cos = p.cosmetic ? ' (cos)' : '';
     pbar.style.width = Math.round(100 * p.index / p.total) + '%';
@@ -1192,21 +1295,68 @@ async function applyVars(name, vars, dir) {
   };
   dl.items.forEach(it => {
     if (!it.ok) return;
-    const entry = { file: it.file, path: it.path, link: it.link || '', enabled: true };
+    // path is the char_swfs row key (an identity, not a file); b64 is the SWF
+    // itself, which the player loads straight from memory.
+    const entry = { file: it.file, path: it.path || '', b64: it.b64 || '', link: it.link || '', enabled: true };
     if (it.cosmetic) project.cosmetics[it.type] = entry;
     else project.slots[it.type] = entry;
   });
   pbar.style.width = '100%';
   ptext.textContent = dl.items.length + '/' + dl.items.length + ' complete';
-  setStatus('Loaded ' + name + ': ' + (Object.keys(project.slots).length + Object.keys(project.cosmetics).length) + '/' + dl.items.length + ' items downloaded.');
+  setStatus('Loaded ' + name + ': ' + (Object.keys(project.slots).length + Object.keys(project.cosmetics).length) + '/' + dl.items.length + ' items from the database.');
   setTimeout(() => prog.classList.remove('show'), 1500);
-  monitorEl.textContent = formatVars(vars) + '\n\nDownloaded to:\n' + dl.dir + '\n\n'
+  monitorEl.textContent = formatVars(vars) + '\n\nItem SWFs (Supabase char_swfs - nothing saved to this device):\n'
     + dl.items.map(it => (it.ok ? '[ok] ' : '[FAIL] ') + (it.cosmetic ? '(cos) ' : '') + it.type + '  ' + it.file).join('\n');
   updatePills();
   renderGear();
   await sendHost();
   refreshSideLog();
   reportRect();
+}
+
+// Character load, streamed: the job hands back each SWF as it resolves and the
+// player gets it immediately, so the first item shows in about a second
+// instead of every item appearing after the whole set has downloaded.
+async function streamItems(name, vars, dir, pbar, ptext) {
+  if (typeof __fb.charLoadPoll !== 'function') return post('downloadAll', { vars, dir });
+  const id = await post('downloadAllStart', { vars, dir });
+  if (!id || id.__postError) return post('downloadAll', { vars, dir });
+  // The player has to be up before the first SWF lands. It almost always is;
+  // on a cold start wait for it, then carry on either way (sendHost re-equips
+  // everything at the end, so a miss here is not fatal).
+  if (!__everLoaded) {
+    for (let i = 0; i < 30; i++) {
+      let v = null;
+      try { v = await post('flashQuery', { method: 'isReady' }); } catch (e) {}
+      if (v === '1') break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    if (project.gender) { try { await post('flashCall', { method: 'setGender', params: [project.gender] }); } catch (e) {} }
+  }
+  const items = [];
+  for (;;) {
+    let p = null;
+    try {
+      const raw = await post('charLoadPoll', { id });
+      p = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) { p = null; }
+    if (p && p.items && p.items.length) {
+      for (const it of p.items) {
+        items.push(it);
+        // Cosmetic gear only shows when the toggle is on, so it is not worn here.
+        if (!it.ok || it.cosmetic || !it.b64) continue;
+        const entry = { file: it.file, path: it.path || '', b64: it.b64, link: it.link || '', enabled: true };
+        project.slots[it.type] = entry;
+        try { await showSlot(it.type); await postSlot(it.type, entry); } catch (e) {}
+      }
+      const n = items.filter(x => x.ok).length;
+      if (p.total) pbar.style.width = Math.max(4, Math.round(100 * items.length / p.total)) + '%';
+      ptext.textContent = n + ' item' + (n === 1 ? '' : 's') + ' loaded';
+      setStatus('Loading ' + name + '... ' + n + ' item' + (n === 1 ? '' : 's'));
+    }
+    if (!p || p.done) return { ok: p ? p.ok : false, items };
+    await new Promise(r => setTimeout(r, 40));
+  }
 }
 
 function formatVars(vars) {
@@ -1278,7 +1428,7 @@ function setBgColor(c, keepScene) {
   project.bgColor = c.toLowerCase();
   bgColor.value = project.bgColor;
   bgColorHex.textContent = project.bgColor.toUpperCase();
-  if (!keepScene) project.bgScene = '';
+  if (!keepScene && project.bgScene !== 'Gradient') project.bgScene = '';
   paintSwatches();
   try { localStorage.setItem('fb.bgColor', project.bgColor); } catch (e) {}
   sendBackground();
@@ -1663,10 +1813,15 @@ function updateTitleBar() {
   const t = document.querySelector('.titlebar');
   const mt = document.getElementById('matchTitle');
   const on = !!(mt && mt.checked);
-  t.style.background = on ? project.bgColor : '';
-  const n = parseInt(project.bgColor.slice(1), 16);
+  if (!on) { t.style.background = ''; t.classList.remove('light'); return; }
+  // On the Gradient scene the bar follows the scene's own falloff (mid -> base)
+  // instead of a flat slab of the picked colour above a dark violet scene.
+  const stops = project.bgScene === 'Gradient' ? gradientStops(project.bgColor) : null;
+  t.style.background = stops ? 'linear-gradient(180deg,' + stops.mid + ',' + stops.base + ')' : project.bgColor;
+  const c = (stops ? stops.mid : project.bgColor).slice(1);
+  const n = parseInt(c, 16);
   const lum = (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
-  t.classList.toggle('light', on && lum > 0.6);
+  t.classList.toggle('light', lum > 0.6);
 }
 try { matchTitle.checked = localStorage.getItem('fb.matchTitle') === '1'; } catch (e) {}
 matchTitle.onchange = () => {
@@ -1687,8 +1842,40 @@ document.getElementById('hideUI').onchange = e => {
 const WD_SLOTS = [['Helm', 'helm', 'helms'], ['Armor', 'armor', 'armors'], ['Cape', 'cape', 'capes'],
   ['Weapon', 'weapon', 'weapons'], ['Pet', 'pet', 'pets'], ['Misc', 'misc', 'ground runes']];
 const WD_PAGE = 50;
-const wd = { slot: 'Helm', q: '', access: 'all', res: null, page: 1, pages: 1, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false, loadTries: 0 };
+const wd = { slot: 'All', q: '', res: null, page: 1, pages: 1, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false, loadTries: 0 };
 try { wd.details = localStorage.getItem('fb.wdDetails') === '1'; } catch (e) {}
+
+// Section labels, and catalog slot -> panel slot (rows carry their own slot, so
+// "All items" can put a tried item in the slot it belongs to).
+const WD_ALL = ['All', 'All items', 'items'];
+const WD_TYPE = { helm: 'Helm', armor: 'Armor', cape: 'Cape', weapon: 'Weapon', pet: 'Pet', ground: 'Misc' };
+function wdLabel(t) { return t === 'All' ? 'All items' : t === 'Misc' ? 'Ground' : t; }
+function wdPlural(t) { return (WD_SLOTS.find(s => s[0] === t) || WD_ALL)[2]; }
+function wdType(it) { return (it && it.s && WD_TYPE[it.s]) || wd.slot; }
+// Section icon: the catalog's own tile art for a slot. "All items" has no
+// icon file, so it gets a stack-of-layers glyph - the whole closet rather than
+// one slot (a 2x2 app grid read as "apps", not "everything").
+function wdIcon(t) {
+  const meta = WD_SLOTS.find(s => s[0] === t);
+  if (meta) {
+    const img = document.createElement('img');
+    img.src = 'icons/' + meta[1] + '.png';
+    img.alt = '';
+    return img;
+  }
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'wd-slot-ico');
+  svg.setAttribute('aria-hidden', 'true');
+  ['M8 1.8 14.1 4.9 8 8 1.9 4.9z', 'M2.2 7.8 8 10.9 13.8 7.8', 'M2.2 10.8 8 13.9 13.8 10.8'].forEach(d => {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(p);
+  });
+  return svg;
+}
 
 function wdEl(tag, cls, text) {
   const e = document.createElement(tag);
@@ -1721,7 +1908,7 @@ function wdReset() { wd.page = 1; wd.pages = 1; wd.res = null; wd.info = {}; wd.
 async function wdGo(p) {
   const seq = ++wd.seq;
   let r = null;
-  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: wd.access, offset: (p - 1) * WD_PAGE, limit: WD_PAGE })); } catch (e) {}
+  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: 'all', offset: (p - 1) * WD_PAGE, limit: WD_PAGE })); } catch (e) {}
   if (seq !== wd.seq) return;
   // Catalog still streaming from Supabase: poll instead of blocking the UI
   // (the old path froze the whole window while ~51 pages were fetched).
@@ -1781,7 +1968,8 @@ function pagerEl() {
 function wdRowEl(it) {
   const row = wdEl('div', 'wd-row');
   row.title = it.n;
-  row._f = wdNorm(wd.slot, it.f);
+  row._t = wdType(it);
+  row._f = wdNorm(row._t, it.f);
   const txt = wdEl('div', 'wd-txt');
   txt.appendChild(wdEl('div', 'wd-n', it.n));
   const bits = [];
@@ -1803,9 +1991,8 @@ function wdRowEl(it) {
 }
 // Try-on / wearing / loading marks, updated in place (no list rebuild).
 function wdMarkRows() {
-  const worn = wdWorn(wd.slot);
   document.querySelectorAll('#wdList .wd-row').forEach(row => {
-    const on = row._f === worn;
+    const on = row._f === wdWorn(row._t || wd.slot);
     row.classList.toggle('worn', on);
     row.classList.remove('try');
     const st = wd.busy === row._f ? 'LOADING' : on ? 'WEARING' : '';
@@ -1815,21 +2002,31 @@ function wdMarkRows() {
 }
 
 function wdRender() {
-  const meta = WD_SLOTS.find(s => s[0] === wd.slot);
-  document.querySelectorAll('#wdSlots .wd-slot').forEach(b => b.classList.toggle('on', b.dataset.slot === wd.slot));
-  document.querySelectorAll('#wdAccess .preset-chip').forEach(b => b.classList.toggle('on', b.dataset.a === wd.access));
+  const btn = document.getElementById('wdPickBtn');
+  const ico = document.getElementById('wdPickIcon');
+  const box = document.getElementById('wdPick');
+  if (btn) { btn.title = wdLabel(wd.slot); btn.setAttribute('aria-label', wdLabel(wd.slot)); }
+  if (box) box.classList.toggle('on', wd.slot !== 'All');
+  if (ico) { ico.textContent = ''; ico.appendChild(wdIcon(wd.slot)); }
+  document.querySelectorAll('#wdPickMenu .wd-pick-item').forEach(b => b.classList.toggle('on', b.dataset.slot === wd.slot));
   document.querySelectorAll('#wdGender .wd-g').forEach(b => b.classList.toggle('on', b.dataset.g === (project.gender || 'F')));
   document.getElementById('wdGender').classList.toggle('busy', wd.busy === 'gender');
   const info = document.getElementById('wdInfo');
   info.classList.toggle('on', wd.details);
   info.title = wd.details ? 'Hide item details' : 'Show item details';
   const r = wd.res || { ok: true, items: [], total: 0, inSlot: 0 };
-  const inSlot = (r.inSlot || 0).toLocaleString('en-US') + ' ' + meta[2];
-  if (activeTab === 'wardrobe') { const sub = document.getElementById('sheetSub'); if (sub) sub.textContent = inSlot; }
-  const filtered = wd.q.trim() || wd.access !== 'all';
+  const inSlot = (r.inSlot || 0).toLocaleString('en-US') + ' ' + wdPlural(wd.slot);
+  // The header line is the one place that reports numbers: the section total,
+  // the live count of a search, or a problem. The tool row is controls only.
   const msg = wd.err || (r.ok === false ? r.error : '');
-  document.getElementById('wdCountRow').classList.toggle('err', !!msg);
-  document.getElementById('wdCount').textContent = msg || (filtered ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot);
+  if (activeTab === 'wardrobe') {
+    const sub = document.getElementById('sheetSub');
+    if (sub) {
+      sub.textContent = msg ? msg
+        : wd.q.trim() ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot;
+      sub.classList.toggle('err', !!msg);
+    }
+  }
   wdMarkRows();
   wdRenderCard();
   pagerEl();
@@ -1839,6 +2036,7 @@ function wdRenderCard() {
   const card = document.getElementById('wdCard');
   card.textContent = '';
   const t = wd.slot;
+  if (t === 'All') { card.hidden = true; return; }   // no single slot to act on
   const s = activeEntry(t);
   if (!(s && s.path)) { card.hidden = true; return; }
   card.hidden = false;
@@ -1877,32 +2075,98 @@ async function wdApply(t) {
   wdRender();
   if (!__everLoaded) { await sendHost(); return; }
   const s = activeEntry(t);
-  if (s && s.enabled && s.path) { await showSlot(t); await post('loadItem', slotMsg(t, s)); }
+  if (s && s.enabled && s.path) { await showSlot(t); await postSlot(t, s); }
   else await clearSlot(t);
 }
 
-async function wdTry(it) {
-  const t = wd.slot, f = wdNorm(t, it.f);
-  if (wd.busy || f === wdWorn(t)) return;
-  wd.busy = f;
-  wd.err = '';
-  wdRender();
-  const res = await post('wardrobeFetch', { slot: t, file: it.f, gender: project.gender || 'F', dir: await wdDir() });
-  wd.busy = '';
-  if (!res || !res.ok) {
-    wd.err = (res && (res.error || res.__postError)) || 'Download failed.';
-    wdRender();
-    return;
-  }
-  // Wear it right away - no Revert/Keep confirmation step.
+// Download one item's SWF and stage it in its own slot, without showing it.
+// Split out of wdTry so the randomiser can fetch every slot at the same time
+// (each fetch is its own host job) and then dress the avatar in one pass.
+// Returns { t } on success or { err } on a failed fetch.
+async function wdStage(it, dir) {
+  const t = wdType(it);
+  const res = await post('wardrobeFetch', { slot: t, file: it.f, gender: project.gender || 'F', dir: dir || await wdDir() });
+  if (!res || !res.ok) return { err: (res && (res.error || res.__postError)) || 'Download failed.' };
   const set = wdSet(t);
   set.entries[t] = { file: res.file, path: res.path, link: it.link || '', enabled: true, wtype: it.w || '' };
   set.names[t] = it.n;
   wd.info[t] = it;
+  return { t };
+}
+
+// true when the item is on (or already was); false when the fetch failed, so
+// the randomiser can roll that slot again.
+async function wdTry(it) {
+  const t = wdType(it), f = wdNorm(t, it.f);
+  if (wd.busy) return false;
+  if (f === wdWorn(t)) return true;
+  wd.busy = f;
+  wd.err = '';
+  wdRender();
+  const r = await wdStage(it);
+  wd.busy = '';
+  if (r.err) {
+    wd.err = r.err;
+    wdRender();
+    return false;
+  }
+  // Wear it right away - no Revert/Keep confirmation step.
   await wdApply(t);
+  return true;
+}
+
+// Randomizer: one random catalog item per slot. Two tiny queries per slot - the
+// first learns the slot's size, the second reads a random offset - so the 50k
+// row catalog never has to cross into the page.
+async function wdRandomSlot(t) {
+  const head = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: 0, limit: 1 }) || 'null');
+  if (head && head.loading) return 'loading';
+  if (!head || head.ok === false || !head.total) return null;
+  const off = Math.floor(Math.random() * head.total);
+  const page = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: off, limit: 1 }) || 'null');
+  return page && page.ok && page.items && page.items[0] ? page.items[0] : null;
+}
+// Every slot is rolled and downloaded at the same time, then the avatar is
+// dressed in one pass: one round trip for the whole outfit instead of six in
+// a row, so the items no longer appear one by one.
+async function wdRandomize() {
+  const btn = document.getElementById('wdRandom');
+  if (btn.disabled || wd.busy) return;
+  btn.disabled = true;
+  wd.err = '';
+  wd.busy = 'random';
+  wdRender();
+  const dir = await wdDir();
+  const roll = async label => {
+    let err = '';
+    // Three rolls per slot: a pick can fail to fetch (an armor with no version
+    // for the current body type), and landing on what is already worn is not a
+    // roll at all.
+    for (let tries = 0; tries < 3; tries++) {
+      const it = await wdRandomSlot(label);
+      if (it === 'loading') return { loading: true };
+      if (!it) return { empty: true };
+      const t = wdType(it);
+      if (wdNorm(t, it.f) === wdWorn(t)) continue;
+      const r = await wdStage(it, dir);
+      if (!r.err) return { t };
+      err = r.err;
+    }
+    return { err };
+  };
+  const out = await Promise.all(WD_SLOTS.map(([label]) => roll(label).catch(e => ({ err: String(e && e.message || e) }))));
+  for (const o of out) if (o.t) await wdApply(o.t);
+  const empty = out.filter(o => o.empty).length;
+  btn.disabled = false;
+  wd.busy = '';
+  wd.err = out.some(o => o.loading) ? 'Loading catalog\u2026'
+    : empty ? 'Nothing to pick from in ' + empty + ' slot' + (empty === 1 ? '' : 's') + '.'
+      : (out.map(o => o.err).filter(Boolean)[0] || '');
+  wdRender();
 }
 
 async function wdTakeOff() {
+  if (wd.slot === 'All') return;
   const t = wd.slot, set = wdSet(t);
   delete set.entries[t];
   delete set.names[t];
@@ -1930,9 +2194,17 @@ async function wdSetGender(g) {
     if (!e || !e.path) return e;
     const m = String(e.file || '').replace(/\\/g, '/').match(t === 'Armor' ? /^classes\/[MF]\/(.+)$/i : /^hair\/[MF]\/(.+)$/i);
     if (!m) return e;
-    const res = await post('wardrobeFetch', { slot: t, file: t === 'Armor' ? m[1] : 'hair/' + g + '/' + m[1], gender: g, dir });
+    const rel = t === 'Armor' ? m[1] : 'hair/' + g + '/' + m[1];
+    // Loader entries hold bytes rather than a file: refetch them through the DB
+    // store so a body switch writes nothing to this device either.
+    if (e.b64) {
+      const r = await post('charItem', { type: t, file: rel, gender: g, name: (wdSet(t).names[t] || '') });
+      if (!r || !r.ok) { missing.push(t); return e; }
+      return Object.assign({}, e, { file: r.file, path: r.path, b64: r.b64 });
+    }
+    const res = await post('wardrobeFetch', { slot: t, file: rel, gender: g, dir });
     if (!res || !res.ok) { missing.push(t); return e; }
-    return Object.assign({}, e, { file: res.file, path: res.path });
+    return Object.assign({}, e, { file: res.file, path: res.path, b64: '' });
   };
   for (const set of [project.slots, project.cosmetics])
     for (const t of ['Armor', 'Hair']) if (set[t]) set[t] = await swap(t, set[t]);
@@ -1946,21 +2218,39 @@ async function wdSetGender(g) {
 }
 
 (function buildWardrobe() {
-  const slots = document.getElementById('wdSlots');
-  WD_SLOTS.forEach(([t, icon]) => {
-    const b = wdEl('div', 'wd-slot');
+  // One picker instead of the row of slot tabs: click it, the sections drop
+  // open, click one and the panel switches to it.
+  const box = document.getElementById('wdPick');
+  const menu = document.getElementById('wdPickMenu');
+  const btn = document.getElementById('wdPickBtn');
+  const pick = open => {
+    box.classList.toggle('open', open);
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  ['All'].concat(WD_SLOTS.map(s => s[0])).forEach(t => {
+    const b = wdEl('div', 'wd-pick-item');
     b.dataset.slot = t;
-    b.title = t === 'Misc' ? 'Ground' : t;
-    const img = document.createElement('img');
-    img.src = 'icons/' + icon + '.png';
-    img.alt = '';
-    b.appendChild(img);
-    b.onclick = () => { if (wd.slot === t) return; wd.slot = t; wd.err = ''; document.getElementById('wdList').scrollTop = 0; wdQuery(); };
-    slots.appendChild(b);
+    b.title = wdLabel(t);
+    b.setAttribute('aria-label', wdLabel(t));
+    if (t === 'All') b.classList.add('all');   // "all items" closes its group
+    const well = wdEl('span', 'wd-well');
+    well.appendChild(wdIcon(t));
+    b.appendChild(well);
+    b.onclick = () => {
+      pick(false);
+      if (wd.slot === t) return;
+      wd.slot = t;
+      wd.err = '';
+      document.getElementById('wdList').scrollTop = 0;
+      wdQuery();
+    };
+    menu.appendChild(b);
   });
-  document.querySelectorAll('#wdAccess .preset-chip').forEach(c => {
-    c.onclick = () => { wd.access = c.dataset.a; document.getElementById('wdList').scrollTop = 0; wdQuery(); };
-  });
+  btn.onclick = e => { e.stopPropagation(); pick(menu.hidden); };
+  document.addEventListener('click', e => { if (!box.contains(e.target)) pick(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') pick(false); });
+  document.getElementById('wdRandom').onclick = wdRandomize;
   // (list scroll no longer pages anything - the pager bar below does)
   document.querySelectorAll('#wdGender .wd-g').forEach(b => { b.onclick = () => wdSetGender(b.dataset.g); });
   document.getElementById('wdInfo').onclick = () => {

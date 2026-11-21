@@ -81,6 +81,16 @@ namespace ManikinApp
         public void Reset() { Ui(() => _form.DoReset()); }
         public void LoadItem(string itemType, string itemFile, string weaponType, string link) { Ui(() => _form.DoLoadItem(itemType, itemFile, weaponType, link)); }
         public void DropItemBytes(string itemType, string fileName, string base64) { Ui(() => _form.DoDropItem(itemType, fileName, base64)); }
+        // Loader items come back from Supabase as bytes; they never existed as a
+        // file on this machine, so they go to the player without a path.
+        public void LoadItemB64(string itemType, string fileName, string base64, string weaponType, string link)
+        {
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(base64 ?? ""); }
+            catch { AppForm.Dbg("LoadItemB64 bad data: " + fileName); return; }
+            if (bytes.Length < 4) return;
+            Ui(() => _form.DoLoadItemBytes(itemType, fileName, bytes, weaponType, link));
+        }
 
         // Network work runs as a background job the page polls for. Host
         // object calls arrive on the UI thread, so the old blocking
@@ -98,7 +108,56 @@ namespace ManikinApp
         }
 
         public string BeginLoadChar(string name) { return StartJob(() => LoadCharCore(name)); }
-        public string BeginDownloadAll(string varsJson, string dir) { return StartJob(() => DownloadAllCore(varsJson, dir)); }
+        // Char-load items stream back to the page as each one resolves, so the
+        // avatar starts equipping on the first SWF instead of the last.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string,
+            System.Collections.Concurrent.ConcurrentQueue<JObject>> _streams =
+            new System.Collections.Concurrent.ConcurrentDictionary<string,
+                System.Collections.Concurrent.ConcurrentQueue<JObject>>();
+
+        public string BeginDownloadAll(string varsJson, string dir)
+        {
+            string id = "job" + System.Threading.Interlocked.Increment(ref _jobSeq);
+            var q = new System.Collections.Concurrent.ConcurrentQueue<JObject>();
+            _streams[id] = q;
+            _jobs[id] = Task.Run(() => DownloadAllCore(varsJson, dir, q));
+            return id;
+        }
+
+        // Everything finished since the last poll. done = the job is over, so the
+        // page stops polling and the id is forgotten.
+        public string CharLoadPoll(string id)
+        {
+            System.Collections.Concurrent.ConcurrentQueue<JObject> q;
+            if (id == null || !_streams.TryGetValue(id, out q))
+                return JsonConvert.SerializeObject(new { done = true, ok = false, error = "unknown job", items = new JArray() });
+            var items = new JArray();
+            JObject got;
+            while (q.TryDequeue(out got)) items.Add(got);
+            Task<string> t;
+            if (!_jobs.TryGetValue(id, out t) || !t.IsCompleted)
+                return JsonConvert.SerializeObject(new { done = false, items });
+            string res = t.Status == TaskStatus.RanToCompletion
+                ? t.Result
+                : JsonConvert.SerializeObject(new { ok = false, error = t.Exception == null ? "job failed" : t.Exception.GetBaseException().Message });
+            JObject root = JObject.Parse(res);
+            bool ok = root["ok"] != null && root["ok"].Type == JTokenType.Boolean && (bool)root["ok"];
+            JArray arr = root["items"] as JArray;
+            string error = root["error"] == null ? "" : (string)root["error"];
+            _jobs.TryRemove(id, out t);
+            _streams.TryRemove(id, out q);
+            return JsonConvert.SerializeObject(new
+            {
+                done = true,
+                ok,
+                error,
+                total = arr == null ? items.Count : arr.Count,
+                items
+            });
+        }
+        // Gender swap for an item that came from the loader (armor and hair art
+        // is per gender). Same DB-then-CDN route as the first load.
+        public string BeginCharItem(string type, string file, string gender, string name) { return StartJob(() => CharItemCore(type, file, gender, name)); }
 
         // Wardrobe panel: catalog search (synchronous - a few ms once the
         // catalog has loaded) and one item's SWF download (a job).
@@ -154,7 +213,10 @@ namespace ManikinApp
             catch (Exception ex) { return JsonConvert.SerializeObject(new { ok = false, error = ex.Message }); }
         }
 
-        static string DownloadAllCore(string varsJson, string dir)
+        // dir is unused now: a character load reads from Supabase and falls back
+        // to the game CDN, so nothing is written to the output folder. The page
+        // still passes the configured folder, so the signature stays.
+        static string DownloadAllCore(string varsJson, string dir, System.Collections.Concurrent.ConcurrentQueue<JObject> sink = null)
         {
             try
             {
@@ -162,33 +224,94 @@ namespace ManikinApp
                 var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var p in vo.Properties()) vars[p.Name] = p.Value.Value<string>();
                 var items = Downloads.BuildDownloads(vars);
-                // Honours the Settings toggle: off redirects the cache to temp.
-                dir = Downloads.EffectiveDir(dir);
-                try { Directory.CreateDirectory(dir); } catch { }
-                var results = new JArray();
-                for (int i = 0; i < items.Count; i++)
-                {
-                    var it = items[i];
-                    // Already on disk from an earlier load: reuse it, don't
-                    // re-download. Reloads become near-instant (delete the
-                    // folder to force a fresh fetch).
-                    string dest = Downloads.EnsureLocalAsync(it, dir).GetAwaiter().GetResult();
-                    results.Add(ItemResult(it, dest));
-                }
-                return JsonConvert.SerializeObject(new { ok = true, items = results, dir });
+                var results = new JObject[items.Count];
+                int fromDb = 0, fetched = 0, stored = 0, failed = 0;
+                // Parallel: each item is one ~0.5-2 s Supabase round trip, so a
+                // serial loop made the load the SUM of seven latencies. Six at a
+                // time makes it roughly the slowest one. Each finished item goes
+                // to the page right away, so equipping no longer waits for the
+                // set to complete.
+                System.Threading.Tasks.Parallel.For(0, items.Count,
+                    new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 6 },
+                    i =>
+                    {
+                        int db = 0, net = 0, put = 0;
+                        JObject r = ResolveItem(items[i], ref db, ref net, ref put);
+                        results[i] = r;
+                        System.Threading.Interlocked.Add(ref fromDb, db);
+                        System.Threading.Interlocked.Add(ref fetched, net);
+                        System.Threading.Interlocked.Add(ref stored, put);
+                        if (!(bool)r["ok"]) System.Threading.Interlocked.Increment(ref failed);
+                        if (sink != null) sink.Enqueue(r);
+                    });
+                var all = new JArray();
+                foreach (var r in results) if (r != null) all.Add(r);
+                AppForm.Dbg("charload: " + items.Count + " items - " + fromDb + " from the database, " +
+                    fetched + " fetched from the game CDN (" + stored + " stored), " + failed + " failed");
+                return JsonConvert.SerializeObject(new { ok = failed == 0, items = all, dir = "" });
             }
             catch (Exception ex) { return JsonConvert.SerializeObject(new { ok = false, error = ex.Message }); }
         }
 
-        internal static JObject ItemResult(Downloads.ItemDownload it, string dest)
+        // One loader item: Supabase row first, and only a miss touches the game
+        // CDN (then gets stored on the way through). Either way the bytes go
+        // straight to the player - no intermediate file on this device.
+        static JObject ResolveItem(Downloads.ItemDownload it, ref int fromDb, ref int fetched, ref int stored)
         {
-            bool ok = dest != null;
+            string key = SwfStore.KeyOf(it.File);
+            byte[] bytes = SwfStore.Get(key);
+            if (bytes != null) fromDb++;
+            else
+            {
+                bytes = Downloads.FetchBytesAsync(it.Url).GetAwaiter().GetResult();
+                if (bytes != null && bytes.Length > 4)
+                {
+                    fetched++;
+                    if (SwfStore.Put(key, bytes, it.Name, it.Link)) stored++;
+                }
+                else bytes = null;
+            }
+            return ItemResult(it, key, bytes);
+        }
+
+        // Gender swap for a loader entry: armor is classes/<gender>/<file>, hair
+        // already carries hair/<gender>/. Same resolver, so a body switch on a
+        // character loaded from the page never writes an SWF to disk either.
+        static string CharItemCore(string type, string file, string gender, string name)
+        {
+            try
+            {
+                string rel = (file ?? "").Trim().Replace('\\', '/');
+                if (string.Equals(type, "Armor", StringComparison.OrdinalIgnoreCase))
+                    rel = "classes/" + (gender == "M" ? "M" : "F") + "/" + rel;
+                var it = new Downloads.ItemDownload { Type = type, Name = name, Url = Downloads.GAME + rel, File = Downloads.LocalPathOf(rel) };
+                int fromDb = 0, fetched = 0, stored = 0;
+                JObject r = ResolveItem(it, ref fromDb, ref fetched, ref stored);
+                bool ok = (bool)r["ok"];
+                return JsonConvert.SerializeObject(new
+                {
+                    ok,
+                    file = (string)r["file"],
+                    path = (string)r["path"],
+                    b64 = (string)r["b64"],
+                    error = ok ? "" : "Download failed: " + rel
+                });
+            }
+            catch (Exception ex) { return JsonConvert.SerializeObject(new { ok = false, error = ex.Message }); }
+        }
+
+        internal static JObject ItemResult(Downloads.ItemDownload it, string key, byte[] bytes)
+        {
+            bool ok = bytes != null && bytes.Length > 4;
             return new JObject
             {
                 { "type", it.Type },
                 { "file", it.File },
                 { "ok", ok },
-                { "path", ok ? dest : "" },
+                // A char_swfs row key, not a file path: the page hands the base64
+                // back to the player instead of opening anything on disk.
+                { "path", ok ? key : "" },
+                { "b64", ok ? Convert.ToBase64String(bytes) : "" },
                 { "link", it.Link ?? "" },
                 { "cosmetic", it.Cosmetic }
             };
@@ -2604,6 +2727,7 @@ namespace ManikinApp
         }
         public void DoReset() { if (_flash != null) _flash.ResetFlash(); }
         public void DoLoadItem(string itemType, string itemFile, string weaponType, string link) { if (_flash != null) _flash.LoadItem(itemType, itemFile, weaponType, link); }
+        public void DoLoadItemBytes(string itemType, string fileName, byte[] bytes, string weaponType, string link) { if (_flash != null) _flash.LoadItemBytes(itemType, bytes, fileName, weaponType, link); }
         public void DoDropFile(string slot, string path)
         {
             Dbg("DoDropFile/native slot=" + slot + " path=" + path);

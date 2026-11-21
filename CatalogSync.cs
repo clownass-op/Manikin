@@ -20,6 +20,8 @@ namespace ManikinApp
         const string Api = "https://aqcloset.com";
         const int PageSize = 200;      // /api/items/latest caps limit at 200
         const int BatchSize = 200;     // rows per PostgREST insert
+        const int RequestGapMs = 210;  // 300 calls/min is the API's limit: ~285/min
+        const int Workers = 4;         // requests in flight while the gap paces them
 
         sealed class Remote
         {
@@ -53,6 +55,26 @@ namespace ManikinApp
             }
         }
 
+        // One request may start every RequestGapMs, no matter how long each
+        // takes, so Workers requests overlap the network wait instead of queuing
+        // behind it. A 341-page walk finishes in about 70 s this way; issuing
+        // them one at a time cost roughly three minutes.
+        static long _nextSlot;
+        static readonly object _rateGate = new object();
+
+        static void WaitSlot()
+        {
+            long wait;
+            lock (_rateGate)
+            {
+                long now = Environment.TickCount;
+                if (_nextSlot < now) _nextSlot = now;
+                wait = _nextSlot - now;
+                _nextSlot = now + wait + RequestGapMs;
+            }
+            if (wait > 0) Thread.Sleep((int)wait);
+        }
+
         static HttpClient CreateClient()
         {
             var c = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
@@ -81,8 +103,9 @@ namespace ManikinApp
             {
                 _phase = "Loading our catalog"; _done = 0; _total = 0; _missing = 0;
                 lock (_recent) _recent.Clear();
-                Wardrobe.Preload();
-                var have = Wardrobe.ExistingFiles();
+                // Paths only: the diff never looks at names, so there is no
+                // reason to pull the whole catalog to compare against.
+                var have = Wardrobe.AllPaths();
                 if (have.Count == 0) return Fail("Our catalog did not load, so there is nothing to compare against.");
 
                 _phase = "Reading aqcloset.com";
@@ -92,22 +115,63 @@ namespace ManikinApp
 
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var missing = new List<Remote>();
-                int repeat = 0, held = 0;
-                for (int offset = 0; offset < total; offset += PageSize)
+                var counters = new int[3];        // repeats, already held, junk
+                var planGate = new object();
+
+                Action<PageResult> take = page =>
                 {
-                    PageResult page = offset == 0 ? first : FetchPage(offset);
-                    if (page.Items.Count == 0) break;
+                    int rep = 0, hld = 0, jnk = 0;
+                    var mine = new List<Remote>(page.Items.Count);
                     foreach (Remote it in page.Items)
                     {
                         if (string.IsNullOrEmpty(it.Name) || string.IsNullOrEmpty(it.File)) continue;
-                        if (!seen.Add(it.File)) { repeat++; continue; }     // same art listed twice
-                        if (have.Contains(it.File)) { held++; continue; }   // already in our table
-                        missing.Add(it);
+                        // Not a real file name ("...swf/t", a trailing tab): the
+                        // wardrobe drops these rows anyway, so writing them only
+                        // litters the table and poisons later batches.
+                        if (!it.File.EndsWith(".swf", StringComparison.OrdinalIgnoreCase)) { jnk++; continue; }
+                        if (have.Contains(it.File)) { hld++; continue; }    // already in our table
+                        if (!seen.Add(it.File)) { rep++; continue; }        // same art listed twice
+                        mine.Add(it);
                     }
-                    _done = Math.Min(offset + PageSize, total);
-                    _missing = missing.Count;
-                    Thread.Sleep(210);                             // stay under 300 calls/min
+                    lock (planGate)
+                    {
+                        counters[0] += rep; counters[1] += hld; counters[2] += jnk;
+                        missing.AddRange(mine);
+                        _done = Math.Min(_done + page.Items.Count, total);
+                        _missing = missing.Count;
+                    }
+                };
+                take(first);
+
+                // Pages 1..n run on Workers tasks, each one waiting its turn for
+                // a request slot rather than sleeping after a whole round trip.
+                var offsets = new List<int>();
+                for (int off = PageSize; off < total; off += PageSize) offsets.Add(off);
+                int nextPage = 0;
+                var jobs = new Task[Workers];
+                for (int w = 0; w < Workers; w++)
+                {
+                    jobs[w] = Task.Run(() =>
+                    {
+                        while (true)
+                        {
+                            int i = Interlocked.Increment(ref nextPage) - 1;
+                            if (i >= offsets.Count) break;
+                            WaitSlot();
+                            PageResult page;
+                            try { page = FetchPage(offsets[i]); }
+                            catch (Exception ex)
+                            {
+                                AppForm.Dbg("catalog scan page " + offsets[i] + " failed: " + ex.Message);
+                                continue;
+                            }
+                            take(page);
+                        }
+                    });
                 }
+                Task.WaitAll(jobs);
+
+                int repeat = counters[0], held = counters[1], junk = counters[2];
 
                 lock (_gate) _plan = missing;
                 _phase = "Scan complete";
@@ -124,6 +188,7 @@ namespace ManikinApp
                     missing = missing.Count,
                     alreadyHave = held,
                     repeats = repeat,
+                    junk = junk,
                     sample
                 });
             }
@@ -147,8 +212,7 @@ namespace ManikinApp
             int plannedBefore = plan.Count;
             try
             {
-                Wardrobe.Reload();
-                HashSet<string> have = Wardrobe.ExistingFiles();
+                HashSet<string> have = Wardrobe.AllPaths();
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var fresh = new List<Remote>(plan.Count);
                 foreach (Remote r in plan)
@@ -169,7 +233,7 @@ namespace ManikinApp
             }
 
             _phase = "Adding items"; _done = 0; _total = plan.Count;
-            int added = 0, failed = 0;
+            int added = 0, failed = 0, already = 0;
             string lastError = "";
             AppForm.Dbg("catalog sync: adding " + plan.Count + " items (" + skipped + " duplicates skipped)");
             try
@@ -177,51 +241,50 @@ namespace ManikinApp
                 for (int i = 0; i < plan.Count; i += BatchSize)
                 {
                     List<Remote> slice = plan.GetRange(i, Math.Min(BatchSize, plan.Count - i));
-                    var rows = new JArray();
-                    foreach (Remote r in slice)
-                        rows.Add(new JObject
-                        {
-                            { "name", r.Name },
-                            { "path", r.File },
-                            { "category", r.Slot },
-                            { "item_group", r.Wtype ?? "" },
-                            { "link", r.Link ?? "" }
-                        });
-
-                    string url = Wardrobe.SupabaseUrl + "?apikey=" + Uri.EscapeDataString(Wardrobe.SupabaseKey);
-                    using (var req = new HttpRequestMessage(HttpMethod.Post, url))
+                    var failedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    string error;
+                    HashSet<string> landed = Post(slice, out error);
+                    if (landed == null)
                     {
-                        req.Content = new StringContent(rows.ToString(Formatting.None), Encoding.UTF8, "application/json");
-                        req.Headers.Add("apikey", Wardrobe.SupabaseKey);
-                        req.Headers.Add("Authorization", "Bearer " + Wardrobe.SupabaseKey);
-                        req.Headers.Add("Prefer", "return=minimal");
-                        var resp = Http.SendAsync(req).GetAwaiter().GetResult();
-                        if (resp.IsSuccessStatusCode)
+                        // Server refused the batch: retry it a row at a time so
+                        // one duplicate cannot take the other rows with it.
+                        AppForm.Dbg("catalog sync: batch refused (" + error + "), retrying one row at a time");
+                        landed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (Remote r in slice)
                         {
-                            added += slice.Count;
-                            // One line per item, in the Log tab's monitor.
-                            var lines = new List<string>(slice.Count);
-                            foreach (Remote r in slice)
-                            {
-                                lines.Add("catalog sync: added " + r.Name + " (" + r.File + ")");
-                                Note("+ " + r.Name + "  (" + r.File + ")");
-                            }
-                            AppForm.DbgMany(lines);
-                        }
-                        else
-                        {
-                            failed += slice.Count;
-                            string body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                            if (body != null && body.Length > 200) body = body.Substring(0, 200);
-                            lastError = (int)resp.StatusCode + " " + body;
-                            AppForm.Dbg("catalog sync batch failed: " + lastError);
+                            string one;
+                            if (Post(new List<Remote> { r }, out one) != null) landed.Add(r.File);
+                            else if (!IsDuplicate(one)) { failedPaths.Add(r.File); lastError = one; }
                         }
                     }
+
+                    // One line per item, in the Log tab's monitor.
+                    var lines = new List<string>(slice.Count);
+                    foreach (Remote r in slice)
+                    {
+                        if (landed.Contains(r.File))
+                        {
+                            added++;
+                            lines.Add("catalog sync: added " + r.Name + " (" + r.File + ")");
+                            Note("+ " + r.Name + "  (" + r.File + ")");
+                        }
+                        else if (failedPaths.Contains(r.File)) { failed++; }
+                        else
+                        {
+                            // Refused because the row is already in the table:
+                            // the diff missed it, which is what used to 409 the
+                            // batch and roll every good row back with it.
+                            already++;
+                            lines.Add("catalog sync: already there " + r.Name + " (" + r.File + ")");
+                        }
+                    }
+                    AppForm.DbgMany(lines);
                     _done = Math.Min(i + BatchSize, plan.Count);
                     AppForm.Dbg("catalog sync: " + _done + "/" + plan.Count + " processed");
                 }
 
-                AppForm.Dbg("catalog sync: done - added " + added + ", failed " + failed + ", skipped " + skipped);
+                AppForm.Dbg("catalog sync: done - added " + added + ", failed " + failed +
+                            ", already there " + already + ", skipped " + skipped);
                 _phase = "Done";
                 lock (_gate) _plan.Clear();   // a second click re-scans instead of re-inserting
                 Wardrobe.Reload();            // pick the new rows up on the next query
@@ -231,11 +294,66 @@ namespace ManikinApp
                     planned = plan.Count,
                     added,
                     failed,
+                    already,
                     skipped,
                     error = lastError
                 });
             }
             catch (Exception ex) { return Fail(ex.Message); }
+        }
+
+        // Insert one batch, tolerating paths that are already in the table.
+        // The old plain insert answered 409 / 23505 ("duplicate key value
+        // violates unique constraint swfs_pkey") and PostgREST rolls the whole
+        // statement back, so a single stale row lost every good row beside it.
+        // resolution=ignore-duplicates makes that ON CONFLICT (path) DO NOTHING,
+        // and return=representation reports exactly which rows landed.
+        // Returns null (with error) only if the server refused outright.
+        static HashSet<string> Post(List<Remote> slice, out string error)
+        {
+            error = "";
+            var rows = new JArray();
+            foreach (Remote r in slice)
+                rows.Add(new JObject
+                {
+                    { "name", r.Name },
+                    { "path", r.File },
+                    { "category", r.Slot },
+                    { "item_group", r.Wtype ?? "" },
+                    { "link", r.Link ?? "" }
+                });
+
+            string url = Wardrobe.SupabaseUrl + "?apikey=" + Uri.EscapeDataString(Wardrobe.SupabaseKey) + "&on_conflict=path";
+            using (var req = new HttpRequestMessage(HttpMethod.Post, url))
+            {
+                req.Content = new StringContent(rows.ToString(Formatting.None), Encoding.UTF8, "application/json");
+                req.Headers.Add("apikey", Wardrobe.SupabaseKey);
+                req.Headers.Add("Authorization", "Bearer " + Wardrobe.SupabaseKey);
+                req.Headers.Add("Prefer", "return=representation,resolution=ignore-duplicates");
+                var resp = Http.SendAsync(req).GetAwaiter().GetResult();
+                string body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    if (body != null && body.Length > 200) body = body.Substring(0, 200);
+                    error = (int)resp.StatusCode + " " + body;
+                    return null;
+                }
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                JArray back = null;
+                try { back = JArray.Parse(body); } catch { }
+                if (back == null) return set;
+                foreach (JToken t in back)
+                {
+                    string p = (string)t["path"];
+                    if (!string.IsNullOrEmpty(p)) set.Add(p);
+                }
+                return set;
+            }
+        }
+
+        static bool IsDuplicate(string error)
+        {
+            return error != null && (error.Contains("23505") || error.Contains("duplicate key"));
         }
 
         static PageResult FetchPage(int offset)
@@ -276,10 +394,16 @@ namespace ManikinApp
         }
 
         // Paths are the join key: both sides store items/helms/X.swf style paths.
+        // aqcloset tags some files "…swf?2", and '?' cannot appear in a real file
+        // name, so the tag is dropped: the clean path is the one we can download
+        // and the one the table should hold.
         static string Normalize(string file)
         {
             if (file == null) return "";
-            return file.Trim().Replace('\\', '/').TrimStart('/').ToLowerInvariant();
+            string s = file.Trim().Replace('\\', '/').TrimStart('/');
+            int q = s.IndexOf('?');
+            if (q >= 0) s = s.Substring(0, q);
+            return s.ToLowerInvariant();
         }
     }
 }

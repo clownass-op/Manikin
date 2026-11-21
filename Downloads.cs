@@ -124,6 +124,41 @@ namespace ManikinApp
             return false;
         }
 
+        // Download a binary straight into memory: no .part file, nothing on
+        // disk. The CharPage loader stores fetched items in Supabase and hands
+        // the bytes to the player, so it has no use for a local copy.
+        public static async Task<byte[]> FetchBytesAsync(string url)
+        {
+            for (int hop = 0; hop < 8; hop++)
+            {
+                var req = (HttpWebRequest)WebRequest.Create(url);
+                req.UserAgent = UA;
+                req.Timeout = 60000;
+                req.AllowAutoRedirect = false;
+                try
+                {
+                    using (var resp = (HttpWebResponse)await req.GetResponseAsync())
+                    {
+                        if ((int)resp.StatusCode >= 300 && (int)resp.StatusCode < 400 && resp.Headers["Location"] != null)
+                        {
+                            url = resp.Headers["Location"];
+                            resp.Close();
+                            continue;
+                        }
+                        if ((int)resp.StatusCode != 200) { resp.Close(); return null; }
+                        using (var src = resp.GetResponseStream())
+                        using (var ms = new MemoryStream())
+                        {
+                            await src.CopyToAsync(ms);
+                            return ms.ToArray();
+                        }
+                    }
+                }
+                catch { return null; }
+            }
+            return null;
+        }
+
         // Parse modern character-page flashvars.
         public static Dictionary<string, string> ParseFlashVars(string html)
         {
@@ -151,6 +186,7 @@ namespace ManikinApp
         public class ItemDownload
         {
             public string Type;
+            public string Name;   // name the character page printed (strXName)
             public string Url;
             public string File;   // cache path relative to the output folder
             public string Link;   // CharPage linkage (strXLink), "" = parse the SWF
@@ -188,14 +224,14 @@ namespace ManikinApp
             string name = Var(vars, nameKey), file = Var(vars, fileKey);
             if (name.Length == 0 || file.Length == 0) return;
             string rel = "classes/" + gender + "/" + file;
-            list.Add(new ItemDownload { Type = "Armor", Url = GAME + rel, File = LocalPathOf(rel), Link = Var(vars, linkKey), Cosmetic = cosmetic });
+            list.Add(new ItemDownload { Type = "Armor", Name = name, Url = GAME + rel, File = LocalPathOf(rel), Link = Var(vars, linkKey), Cosmetic = cosmetic });
         }
 
         static void Add(List<ItemDownload> list, Dictionary<string, string> vars, string type, string nameKey, string fileKey, string linkKey, bool cosmetic)
         {
             string name = Var(vars, nameKey), file = Var(vars, fileKey);
             if (name.Length == 0 || file.Length == 0) return;
-            list.Add(new ItemDownload { Type = type, Url = GAME + file, File = LocalPathOf(file), Link = Var(vars, linkKey), Cosmetic = cosmetic });
+            list.Add(new ItemDownload { Type = type, Name = name, Url = GAME + file, File = LocalPathOf(file), Link = Var(vars, linkKey), Cosmetic = cosmetic });
         }
 
         // Settings > Download SWFs. When off, fetched items are cached in a

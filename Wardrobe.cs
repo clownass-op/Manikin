@@ -235,9 +235,9 @@ namespace ManikinApp
         // One page body from Supabase. apikey MUST be a query param (headers
         // alone are rejected by this deployment); the first page additionally
         // asks for an exact row count.
-        static async Task<string> FetchPage(long offset, int pageSize)
+        static async Task<string> FetchPage(long offset, int pageSize, string select = null)
         {
-            string url = "?select=name,path,category,item_group,link,meta" +
+            string url = "?select=" + (select ?? "name,path,category,item_group,link,meta") +
                          "&order=created_at.desc&limit=" + pageSize +
                          "&offset=" + offset + "&apikey=" + SupabaseKey;
             var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -264,6 +264,57 @@ namespace ManikinApp
                 AppForm.Dbg("Supabase count: status=" + (int)resp.StatusCode + " content-range=" + (cr ?? "-") + " total=" + lastTotal);
             }
             return body;
+        }
+
+        // Just the path column, paged the same way. CatalogSync only needs the
+        // join key, and pulling name/link/meta for 51k rows costs several times
+        // the bytes for data the diff throws away (that load took ~20 s).
+        internal static HashSet<string> AllPaths()
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (SupabaseClient == null) return ExistingFiles();
+                const int pageSize = 1000;
+                const int maxParallel = 8;
+                JArray first = ParseRows(FetchPage(0, pageSize, "path").GetAwaiter().GetResult(), 0);
+                if (first == null || first.Count == 0) return ExistingFiles();
+                AddPaths(set, first);
+
+                int total = Math.Max(lastTotal, set.Count);
+                var offsets = new List<long>();
+                for (long off = pageSize; off < total; off += pageSize) offsets.Add(off);
+
+                for (int start = 0; start < offsets.Count; start += maxParallel)
+                {
+                    var tasks = new List<Task<JArray>>();
+                    for (int i = start; i < offsets.Count && i < start + maxParallel; i++)
+                    {
+                        long off = offsets[i];
+                        tasks.Add(Task.Run(() => ParseRows(FetchPage(off, pageSize, "path").GetAwaiter().GetResult(), off)));
+                    }
+                    foreach (JArray page in Task.WhenAll(tasks).GetAwaiter().GetResult())
+                        if (page != null) AddPaths(set, page);
+                }
+                AppForm.Dbg("catalog diff: " + set.Count + " paths from Supabase");
+            }
+            catch (Exception ex)
+            {
+                // Never let the fast path cost the sync: fall back to the rows
+                // the wardrobe already has in memory.
+                AppForm.Dbg("catalog diff: path fetch failed (" + ex.Message + "), using the loaded catalog");
+                return ExistingFiles();
+            }
+            return set;
+        }
+
+        static void AddPaths(HashSet<string> set, JArray rows)
+        {
+            foreach (JToken r in rows)
+            {
+                string p = TrimOr((string)r["path"]);
+                if (p.Length > 0) set.Add(p.Replace('\\', '/').ToLowerInvariant());
+            }
         }
 
         // Page body -> row array; tolerates a wrapped { "rows": [ ... ] } and
@@ -352,7 +403,7 @@ namespace ManikinApp
                 WeaponType = itemGroup.Equals("Weapon", StringComparison.OrdinalIgnoreCase) ? category : "",
                 Member = member, Ac = ac, Rarity = rarity, Where = where
             };
-            it.Haystack = (it.Name + "\n" + string.Join("|", alts) + "\n" + it.File).ToLowerInvariant();
+            it.Haystack = Fold(it.Name + "\n" + string.Join("|", alts) + "\n" + it.File);
             list.Add(it);
         }
 
@@ -384,6 +435,20 @@ namespace ManikinApp
                 case "mi": return "ground";
             }
             return "ground";   // ground runes and anything unrecognized -> Misc
+        }
+
+        // Catalog names carry typographic punctuation ("Gan\u2019s Divine
+        // Retribution") while people type the ASCII one, so a plain substring
+        // search for "gan's" matched nothing. Fold quotes to one form and drop
+        // apostrophes entirely: "gan's", "gan\u2019s" and "gans" all hit the
+        // same item, and the same folding runs over both sides of the compare.
+        static string Fold(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.ToLowerInvariant()
+                .Replace("\u2019", "").Replace("\u2018", "").Replace("'", "")
+                .Replace("\u201C", "\"").Replace("\u201D", "\"")
+                .Replace("\u2013", "-").Replace("\u2014", "-");
         }
 
         static bool BoolMeta(JToken t)
@@ -443,7 +508,7 @@ namespace ManikinApp
                         Member = ((int)r[6] & 1) != 0, Ac = ((int)r[6] & 2) != 0,
                         Rarity = (string)r[7], Where = (string)r[8]
                     };
-                    it.Haystack = (it.Name + "\n" + alts + "\n" + it.File).ToLowerInvariant();
+                    it.Haystack = Fold(it.Name + "\n" + alts + "\n" + it.File);
                     list.Add(it);
                 }
                 AppForm.Dbg("wardrobe: " + list.Count + " items from local JSON");
@@ -482,8 +547,11 @@ namespace ManikinApp
         // pre-sorted A-Z; total is the full match count.
         public static string Query(string slot, string q, string access, int offset, int limit)
         {
-            string cs;
-            if (slot == null || !CatalogSlot.TryGetValue(slot, out cs))
+            // "All" is the panel's default view: every slot, unfiltered.
+            bool all = slot != null && (slot.Equals("All", StringComparison.OrdinalIgnoreCase) ||
+                                        slot.Equals("All items", StringComparison.OrdinalIgnoreCase));
+            string cs = null;
+            if (!all && (slot == null || !CatalogSlot.TryGetValue(slot, out cs)))
                 return JsonConvert.SerializeObject(new { ok = false, error = "unknown slot " + slot });
             // Never block the UI thread while Supabase is still streaming (the
             // full catalog is 50k+ rows); the page retries a "loading" answer.
@@ -492,12 +560,12 @@ namespace ManikinApp
                 return JsonConvert.SerializeObject(new { ok = false, loading = true, error = "Loading catalog from Supabase…" });
             if (Items.Count == 0)
                 return JsonConvert.SerializeObject(new { ok = false, error = "No catalog: unable to load from Supabase or JSON." });
-            var words = (q ?? "").ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var words = Fold(q).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             int total = 0, inSlot = 0;
             var outRows = new JArray();
             foreach (var it in Items)
             {
-                if (it.Slot != cs) continue;
+                if (!all && it.Slot != cs) continue;
                 inSlot++;
                 // "Free" = buyable with gold: member-only and AC items are both
                 // excluded. AC items sit on the member side of the split so
@@ -511,7 +579,9 @@ namespace ManikinApp
                 if (total++ >= offset && outRows.Count < limit)
                     outRows.Add(new JObject
                     {
-                        { "n", it.Name }, { "f", it.File }, { "alt", new JArray(it.Alts) }, { "link", it.Link },
+                        // "s" lets the panel try an item on in its own slot when the
+                        // view is not filtered to one.
+                        { "n", it.Name }, { "f", it.File }, { "s", it.Slot }, { "alt", new JArray(it.Alts) }, { "link", it.Link },
                         { "w", it.WeaponType }, { "m", it.Member }, { "ac", it.Ac }, { "r", it.Rarity }, { "where", it.Where }
                     });
             }
