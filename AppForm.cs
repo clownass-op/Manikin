@@ -161,7 +161,7 @@ namespace ManikinApp
 
         // Wardrobe panel: catalog search (synchronous - a few ms once the
         // catalog has loaded) and one item's SWF download (a job).
-        public string WardrobeQuery(string slot, string q, string access, int offset, int limit) { return Wardrobe.Query(slot, q, access, offset, limit); }
+        public string WardrobeQuery(string slot, string q, string access, int offset, int limit, string rarity, string state) { return Wardrobe.Query(slot, q, access, offset, limit, rarity, state); }
         public string BeginWardrobeFetch(string slot, string file, string gender, string dir) { return StartJob(() => Wardrobe.Fetch(slot, file, gender, dir)); }
 
         // Settings > Catalog: diff aqcloset.com against our table, then insert.

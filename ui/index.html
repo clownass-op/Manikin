@@ -358,6 +358,11 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .wd-pick-item{position:relative;height:28px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:transparent;cursor:pointer;color:#aab2c8;transition:background .12s,color .12s;}
 .wd-pick-item.all{margin-bottom:5px;}
 .wd-pick-item.all::after{content:'';position:absolute;left:2px;right:2px;bottom:-4px;height:1px;background:rgba(255,255,255,.08);}
+/* Rarity rail: same key and coins; "unobtainable" is separated by a hairline
+   because it is an availability state, not a rarity tier. */
+.wd-pick-item.sep{margin-top:5px;}
+.wd-pick-item.sep::before{content:'';position:absolute;left:2px;right:2px;top:-4px;height:1px;background:rgba(255,255,255,.08);}
+.wd-well > svg.wd-rar-gem{width:15px;height:15px;}
 .wd-well{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 28%,rgba(255,255,255,.11),rgba(255,255,255,.028) 72%);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 1px 2px rgba(0,0,0,.28);transition:background .13s,box-shadow .13s,transform .13s;}
 .wd-well img{width:15px;height:15px;object-fit:contain;}
 .wd-well > svg.wd-slot-ico{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;}
@@ -500,6 +505,12 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
               <span class="ico" id="wdPickIcon"></span>
             </button>
             <div class="wd-pick-menu" id="wdPickMenu" hidden></div>
+          </div>
+          <div class="wd-pick" id="wdRar">
+            <button type="button" class="wd-pick-btn" id="wdRarBtn" aria-haspopup="true" aria-expanded="false" title="All rarities">
+              <span class="ico" id="wdRarIcon"></span>
+            </button>
+            <div class="wd-pick-menu" id="wdRarMenu" hidden></div>
           </div>
           <div class="wd-tools">
             <div class="wd-gender" id="wdGender" title="Body type"><div class="wd-g" data-g="M">M</div><div class="wd-g" data-g="F">F</div></div>
@@ -651,7 +662,7 @@ function post(method, args) {
       case 'downloadAll': return __fb.beginDownloadAll(JSON.stringify(args.vars), args.dir).then(awaitJob);
       case 'downloadAllStart': return __fb.beginDownloadAll(JSON.stringify(args.vars), args.dir);
       case 'charLoadPoll': return __fb.charLoadPoll(args.id);
-      case 'wardrobeQuery': return __fb.wardrobeQuery(args.slot, args.q || '', args.access || 'all', args.offset || 0, args.limit || 200);
+      case 'wardrobeQuery': return __fb.wardrobeQuery(args.slot, args.q || '', args.access || 'all', args.offset || 0, args.limit || 200, args.rarity || '', args.state || '');
       case 'wardrobeFetch': return __fb.beginWardrobeFetch(args.slot, args.file, args.gender || 'F', args.dir || '').then(awaitJob);
       case 'gearClicks': return __fb.takeGearClicks();
       case 'copyLog': return __fb.copyLog();
@@ -1842,13 +1853,27 @@ document.getElementById('hideUI').onchange = e => {
 const WD_SLOTS = [['Helm', 'helm', 'helms'], ['Armor', 'armor', 'armors'], ['Cape', 'cape', 'capes'],
   ['Weapon', 'weapon', 'weapons'], ['Pet', 'pet', 'pets'], ['Misc', 'misc', 'ground runes']];
 const WD_PAGE = 50;
-const wd = { slot: 'All', q: '', res: null, page: 1, pages: 1, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false, loadTries: 0 };
+const wd = { slot: 'All', q: '', rf: { rarity: '', state: '' }, res: null, page: 1, pages: 1, info: {}, busy: '', err: '', seq: 0, qTimer: null, details: false, loadTries: 0 };
 try { wd.details = localStorage.getItem('fb.wdDetails') === '1'; } catch (e) {}
 
 // Section labels, and catalog slot -> panel slot (rows carry their own slot, so
 // "All items" can put a tried item in the slot it belongs to).
 const WD_ALL = ['All', 'All items', 'items'];
 const WD_TYPE = { helm: 'Helm', armor: 'Armor', cape: 'Cape', weapon: 'Weapon', pet: 'Pet', ground: 'Misc' };
+// Rarity rail, in tier order. The last entry is the catalog's availability
+// state, not a rarity, so it is drawn as a padlock and sits behind a hairline.
+// Colours are the tiers' own, so a filled gem means "this tier is on".
+const WD_RARITY = [
+  { k: '', label: 'All rarities', c: '' },
+  { k: 'Rare', c: '#5B9DFF' },
+  { k: 'Seasonal', c: '#4FD6A0' },
+  { k: 'Awesome', c: '#FF8A3D' },
+  { k: 'Legendary', c: '#F5C451' },
+  { k: 'Epic', c: '#B07CFF' },
+  { k: 'Weird', c: '#FF6BD6' },
+  { k: 'Ultra Rare', c: '#FF5A6E' },
+  { k: 'Unobtainable', c: '#E2556A', state: 'unobtainable' }
+];
 function wdLabel(t) { return t === 'All' ? 'All items' : t === 'Misc' ? 'Ground' : t; }
 function wdPlural(t) { return (WD_SLOTS.find(s => s[0] === t) || WD_ALL)[2]; }
 function wdType(it) { return (it && it.s && WD_TYPE[it.s]) || wd.slot; }
@@ -1877,6 +1902,44 @@ function wdIcon(t) {
   return svg;
 }
 
+// A cut gem: filled with the tier's colour, or left as an outline for "all".
+function wdGem(color) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'wd-rar-gem');
+  svg.setAttribute('aria-hidden', 'true');
+  const add = (attrs) => {
+    const p = document.createElementNS(NS, 'path');
+    for (const a in attrs) p.setAttribute(a, attrs[a]);
+    svg.appendChild(p);
+  };
+  if (!color) {
+    add({ d: 'M2.6 6.4 5.4 2.8h5.2l2.8 3.6L8 13.4z', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2, 'stroke-linejoin': 'round' });
+    add({ d: 'M2.6 6.4h10.8M5.4 2.8 8 6.4l2.6-3.6M8 6.4v7', fill: 'none', stroke: 'currentColor', 'stroke-width': .7, opacity: .5 });
+    return svg;
+  }
+  add({ d: 'M2.6 6.4 5.4 2.8h5.2l2.8 3.6L8 13.4z', fill: color, stroke: 'none' });
+  add({ d: 'M2.6 6.4h10.8M5.4 2.8 8 6.4l2.6-3.6M8 6.4v7', fill: 'none', stroke: 'rgba(255,255,255,.55)', 'stroke-width': .7, 'stroke-linejoin': 'round' });
+  return svg;
+}
+// The unobtainable state: a padlock, deliberately not a gem.
+function wdLock() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'wd-rar-gem');
+  svg.setAttribute('aria-hidden', 'true');
+  const add = (tag, attrs) => {
+    const e = document.createElementNS(NS, tag);
+    for (const a in attrs) e.setAttribute(a, attrs[a]);
+    svg.appendChild(e);
+  };
+  add('rect', { x: 3.4, y: 7, width: 9.2, height: 6.4, rx: 1.7, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.4 });
+  add('path', { d: 'M5.7 7V5.4a2.3 2.3 0 0 1 4.6 0V7', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.4, 'stroke-linecap': 'round' });
+  add('circle', { cx: 8, cy: 10.2, r: .9, fill: 'currentColor' });
+  return svg;
+}
 function wdEl(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -1908,7 +1971,7 @@ function wdReset() { wd.page = 1; wd.pages = 1; wd.res = null; wd.info = {}; wd.
 async function wdGo(p) {
   const seq = ++wd.seq;
   let r = null;
-  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: 'all', offset: (p - 1) * WD_PAGE, limit: WD_PAGE })); } catch (e) {}
+  try { r = JSON.parse(await post('wardrobeQuery', { slot: wd.slot, q: wd.q, access: 'all', offset: (p - 1) * WD_PAGE, limit: WD_PAGE, rarity: wd.rf.rarity, state: wd.rf.state })); } catch (e) {}
   if (seq !== wd.seq) return;
   // Catalog still streaming from Supabase: poll instead of blocking the UI
   // (the old path froze the whole window while ~51 pages were fetched).
@@ -2009,6 +2072,19 @@ function wdRender() {
   if (box) box.classList.toggle('on', wd.slot !== 'All');
   if (ico) { ico.textContent = ''; ico.appendChild(wdIcon(wd.slot)); }
   document.querySelectorAll('#wdPickMenu .wd-pick-item').forEach(b => b.classList.toggle('on', b.dataset.slot === wd.slot));
+  // Rarity key: the gem of the open filter (outline when nothing is filtered).
+  const rarKey = document.getElementById('wdRarBtn'), rarIco = document.getElementById('wdRarIcon'), rarBox = document.getElementById('wdRar');
+  const rf = wd.rf || { rarity: '', state: '' };
+  const rsel = WD_RARITY.find(r => (r.state || '') === rf.state && (r.k || '') === rf.rarity) || WD_RARITY[0];
+  if (rarKey) {
+    const lab = rsel.label || rsel.k;
+    rarKey.title = lab;
+    rarKey.setAttribute('aria-label', lab);
+  }
+  if (rarBox) rarBox.classList.toggle('on', !!(rf.rarity || rf.state));
+  if (rarIco) { rarIco.textContent = ''; rarIco.appendChild(rsel.state ? wdLock() : wdGem(rsel.c)); }
+  document.querySelectorAll('#wdRarMenu .wd-pick-item').forEach(b =>
+    b.classList.toggle('on', (b.dataset.rar || '') === rf.rarity && (b.dataset.state || '') === rf.state));
   document.querySelectorAll('#wdGender .wd-g').forEach(b => b.classList.toggle('on', b.dataset.g === (project.gender || 'F')));
   document.getElementById('wdGender').classList.toggle('busy', wd.busy === 'gender');
   const info = document.getElementById('wdInfo');
@@ -2023,7 +2099,8 @@ function wdRender() {
     const sub = document.getElementById('sheetSub');
     if (sub) {
       sub.textContent = msg ? msg
-        : wd.q.trim() ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot;
+        : (wd.q.trim() || wd.rf.rarity || wd.rf.state)
+          ? r.total.toLocaleString('en-US') + (r.total === 1 ? ' match' : ' matches') : inSlot;
       sub.classList.toggle('err', !!msg);
     }
   }
@@ -2119,11 +2196,11 @@ async function wdTry(it) {
 // first learns the slot's size, the second reads a random offset - so the 50k
 // row catalog never has to cross into the page.
 async function wdRandomSlot(t) {
-  const head = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: 0, limit: 1 }) || 'null');
+  const head = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: 0, limit: 1, rarity: wd.rf.rarity, state: wd.rf.state }) || 'null');
   if (head && head.loading) return 'loading';
   if (!head || head.ok === false || !head.total) return null;
   const off = Math.floor(Math.random() * head.total);
-  const page = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: off, limit: 1 }) || 'null');
+  const page = JSON.parse(await post('wardrobeQuery', { slot: t, q: '', access: 'all', offset: off, limit: 1, rarity: wd.rf.rarity, state: wd.rf.state }) || 'null');
   return page && page.ok && page.items && page.items[0] ? page.items[0] : null;
 }
 // Every slot is rolled and downloaded at the same time, then the avatar is
@@ -2250,6 +2327,43 @@ async function wdSetGender(g) {
   btn.onclick = e => { e.stopPropagation(); pick(menu.hidden); };
   document.addEventListener('click', e => { if (!box.contains(e.target)) pick(false); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') pick(false); });
+  // Second key on the row: the rarity / availability filter. Same round button
+  // and same coin rail as the sections - one gem per tier, a padlock for items
+  // that can no longer be obtained, and an unfilled gem for "all".
+  const rBox = document.getElementById('wdRar');
+  const rMenu = document.getElementById('wdRarMenu');
+  const rBtn = document.getElementById('wdRarBtn');
+  const rPick = open => {
+    rBox.classList.toggle('open', open);
+    rMenu.hidden = !open;
+    rBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  WD_RARITY.forEach(r => {
+    const b = wdEl('div', 'wd-pick-item');
+    if (!r.k) b.classList.add('all');    // "all rarities" closes its group
+    if (r.state) b.classList.add('sep'); // an availability state, not a tier
+    b.dataset.rar = r.k || '';
+    b.dataset.state = r.state || '';
+    b.title = r.label || r.k;
+    b.setAttribute('aria-label', r.label || r.k);
+    const well = wdEl('span', 'wd-well');
+    well.appendChild(r.state ? wdLock() : wdGem(r.c));
+    b.appendChild(well);
+    b.onclick = () => {
+      rPick(false);
+      const rarity = r.state ? '' : (r.k || '');
+      const st = r.state || '';
+      if (wd.rf.rarity === rarity && wd.rf.state === st) return;
+      wd.rf = { rarity, state: st };
+      wd.err = '';
+      document.getElementById('wdList').scrollTop = 0;
+      wdQuery();
+    };
+    rMenu.appendChild(b);
+  });
+  rBtn.onclick = e => { e.stopPropagation(); rPick(rMenu.hidden); };
+  document.addEventListener('click', e => { if (!rBox.contains(e.target)) rPick(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') rPick(false); });
   document.getElementById('wdRandom').onclick = wdRandomize;
   // (list scroll no longer pages anything - the pager bar below does)
   document.querySelectorAll('#wdGender .wd-g').forEach(b => { b.onclick = () => wdSetGender(b.dataset.g); });

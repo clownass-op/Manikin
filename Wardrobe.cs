@@ -96,7 +96,7 @@ namespace ManikinApp
 
         public class Item
         {
-            public string Slot, File, Name, Link, WeaponType, Rarity, Where;
+            public string Slot, File, Name, Link, WeaponType, Rarity, Where, State;
             public string[] Alts;
             public bool Member, Ac;
             internal string Haystack;   // lower-case name + alts + file, for search
@@ -359,6 +359,7 @@ namespace ManikinApp
             // "member":false}); some rows hold junk like "227" - parse tolerantly.
             string rarity = "(no rarity)";
             string where = "";
+            string state = "";
             bool member = false, ac = false;
             try
             {
@@ -375,6 +376,10 @@ namespace ManikinApp
                         if (rv != null && rv.Type != JTokenType.Null && ((string)rv).Length > 0) rarity = (string)rv;
                         JToken wv = m["where"];
                         if (wv != null && wv.Type != JTokenType.Null) where = (string)wv;
+                        // "state" is the availability ("in-game", "rare",
+                        // "unobtainable"), separate from the rarity tier.
+                        JToken sv = m["state"];
+                        if (sv != null && sv.Type != JTokenType.Null) state = TrimOr((string)sv);
                         ac = BoolMeta(m["ac"]);
                         member = BoolMeta(m["member"]);
                     }
@@ -401,7 +406,7 @@ namespace ManikinApp
                 Alts = alts,
                 Link = TrimOr((string)row["link"]),
                 WeaponType = itemGroup.Equals("Weapon", StringComparison.OrdinalIgnoreCase) ? category : "",
-                Member = member, Ac = ac, Rarity = rarity, Where = where
+                Member = member, Ac = ac, Rarity = rarity, Where = where, State = state
             };
             it.Haystack = Fold(it.Name + "\n" + string.Join("|", alts) + "\n" + it.File);
             list.Add(it);
@@ -543,9 +548,10 @@ namespace ManikinApp
         }
 
         // One page (offset, limit) of the rows for a slot, filtered by access
-        // ("all" | "free" | "member" | "ac") and by every word of q. Rows come
-        // pre-sorted A-Z; total is the full match count.
-        public static string Query(string slot, string q, string access, int offset, int limit)
+        // ("all" | "free" | "member" | "ac"), by one rarity tier or the
+        // "unobtainable" state, and by every word of q. Rows come pre-sorted
+        // A-Z; total is the full match count.
+        public static string Query(string slot, string q, string access, int offset, int limit, string rarity, string state)
         {
             // "All" is the panel's default view: every slot, unfiltered.
             bool all = slot != null && (slot.Equals("All", StringComparison.OrdinalIgnoreCase) ||
@@ -567,6 +573,10 @@ namespace ManikinApp
             {
                 if (!all && it.Slot != cs) continue;
                 inSlot++;
+                // The panel's rarity key picks one tier by name, or the
+                // unobtainable state (a meta field, not a rarity).
+                if (!string.IsNullOrEmpty(rarity) && !string.Equals(it.Rarity, rarity, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrEmpty(state) && !string.Equals(it.State, state, StringComparison.OrdinalIgnoreCase)) continue;
                 // "Free" = buyable with gold: member-only and AC items are both
                 // excluded. AC items sit on the member side of the split so
                 // free + member still covers every row in the slot.

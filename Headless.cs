@@ -1186,6 +1186,41 @@ namespace ManikinApp
             await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_picker.png"));
             await Js("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
             Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdPickMenu').hidden")), "Escape did not close the dropdown");
+            // Rarity rail: the same round key and coin menu as the sections,
+            // defaulting to every rarity, with the unobtainable state as its own
+            // coin because it is availability, not a tier.
+            Expect(JsonConvert.DeserializeObject<string>(await Js("document.getElementById('wdRarBtn').title")) == "All rarities",
+                "rarity key does not default to all rarities");
+            Expect(JsonConvert.DeserializeObject<int>(await Js("document.querySelectorAll('#wdRarMenu .wd-pick-item').length")) == 9,
+                "rarity dropdown does not list every tier");
+            await Js("document.getElementById('wdRarBtn').click()");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("!document.getElementById('wdRarMenu').hidden")), "rarity dropdown did not open");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("(() => { const m = document.getElementById('wdRarMenu').getBoundingClientRect(); const b = document.getElementById('wdRarBtn').getBoundingClientRect(); const p = document.getElementById('p-wardrobe').getBoundingClientRect(); return m.left >= p.left - 1 && m.right <= p.right + 1 && Math.abs(m.width - b.width) <= 1 && Math.abs(m.left - b.left) <= 1; })()")),
+                "rarity dropdown is not sized and aligned to its key");
+            Expect(JsonConvert.DeserializeObject<int>(await Js("new Set([...document.querySelectorAll('#wdRarMenu .wd-pick-item')].map(b => Math.round(b.getBoundingClientRect().top))).size")) == 9,
+                "rarity coins are not one per row");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("[...document.querySelectorAll('#wdRarMenu .wd-pick-item')].every(b => (b.getAttribute('aria-label') || '').trim().length > 0 && b.textContent.trim() === '' && !!b.querySelector('.wd-well svg'))")),
+                "a rarity coin is unlabelled, shows text, or has no symbol");
+            await Task.Delay(300);   // let the overlay finish painting
+            await _form.SavePagePng(Path.Combine(_snapDir, "wardrobe_rarity.png"));
+            // A tier narrows the list and the header switches to match counts.
+            await Js("document.querySelectorAll('#wdRarMenu .wd-pick-item')[1].click()");
+            Expect(JsonConvert.DeserializeObject<string>(await Js("wd.rf.rarity")) == "Rare", "rarity key did not select Rare");
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('wdRarMenu').hidden")), "rarity dropdown stayed open after a pick");
+            await JsAwait("(wd.q = '', wdQuery())");
+            var rare = JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(wd.res)")));
+            Expect((int)rare["total"] > 0 && (int)rare["total"] < (int)rare["inSlot"], "Rare filter total " + rare["total"] + "/" + rare["inSlot"]);
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("wd.res.items.every(i => i.r === 'Rare')")), "Rare filter returned another tier");
+            Expect(JsonConvert.DeserializeObject<string>(await Js("document.getElementById('sheetSub').textContent.replace(/[^0-9]/g, '')")) == ((int)rare["total"]).ToString(),
+                "header does not report the filtered count");
+            // Unobtainable is a coin of its own and filters on the catalog state.
+            await JsAwait("(wd.slot = 'All', wd.q = '', wd.rf = { rarity: '', state: 'unobtainable' }, wdQuery())");
+            var unob = JObject.Parse(JsonConvert.DeserializeObject<string>(await Js("JSON.stringify(wd.res)")));
+            Expect((int)unob["total"] > 0 && (int)unob["total"] <= 500, "unobtainable filter total " + unob["total"]);
+            // Back to every rarity: the key shows the outline gem again.
+            await JsAwait("(wd.rf = { rarity: '', state: '' }, wd.slot = 'Helm', wd.q = 'leprechaun', wdQuery())");
+            Expect(JsonConvert.DeserializeObject<string>(await Js("document.getElementById('wdRarBtn').title")) == "All rarities",
+                "rarity key did not reset to all rarities");
             var dk = await WardrobeQuery("Armor", "legion doomknight", "all");
             Expect(dk["items"].Any(i => (string)i["f"] == "LegionDoomKnightr3.swf"), "Legion DoomKnight path missing or not cleaned: " + dk["items"].ToString(Formatting.None));
             // Paging: WD_PAGE = 50 rows per page; the bottom pager strip flips
