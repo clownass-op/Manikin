@@ -103,10 +103,25 @@ body.preload .dock,body.preload .sheet{transition:none !important;}
 .cat-card:hover:not(:disabled){background:#1c2035;border-color:color-mix(in srgb,var(--accent-1) 55%,transparent);transform:translateY(-1px);}
 .cat-card:active:not(:disabled){transform:translateY(0);}
 .cat-card:disabled{cursor:default;opacity:.75;}
-.cat-ico{width:28px;height:28px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:linear-gradient(135deg,var(--a1),var(--a2));color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.3);}
-.cat-ico svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
-.cat-card.busy .cat-ico svg{animation:catspin .9s linear infinite;}
-@keyframes catspin{to{transform:rotate(-360deg);}}
+/* A filled accent tile reads as a coloured blob at this size, so the chip is a
+   dark glass tile with an accent hairline and an accent glyph instead. That
+   keeps its identity whatever accent colour the theme is set to. */
+.cat-ico{position:relative;width:30px;height:30px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid color-mix(in srgb,var(--a1) 52%,rgba(255,255,255,.16));background:linear-gradient(160deg,rgba(255,255,255,.11),rgba(255,255,255,.025) 55%,rgba(0,0,0,.14));color:color-mix(in srgb,var(--a1) 88%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.17),inset 0 -8px 12px rgba(0,0,0,.16),0 6px 14px -10px color-mix(in srgb,var(--a1) 100%,transparent);transition:transform .2s,border-color .2s,box-shadow .25s;}
+.cat-ico svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;transition:transform .28s cubic-bezier(.34,1.4,.64,1);}
+.cat-card:hover:not(:disabled) .cat-ico{transform:translateY(-1px);}
+.cat-card:hover:not(:disabled) .cat-ico svg{transform:rotate(-18deg);}
+/* Busy state: the refresh arrow is swapped for a ring spinner rather than
+   rotating the arrow itself, which reads as a tumbling glyph, not loading.
+   The ring is a faint track with a bright quarter sweeping clockwise. */
+.cat-spin{display:none;width:16px;height:16px;border-radius:50%;background:conic-gradient(from 0deg,rgba(255,255,255,0) 0deg,color-mix(in srgb,currentColor 24%,transparent) 120deg,currentColor 320deg,currentColor 360deg),color-mix(in srgb,currentColor 14%,transparent);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2.4px),#000 calc(100% - 2.3px));mask:radial-gradient(farthest-side,transparent calc(100% - 2.4px),#000 calc(100% - 2.3px));animation:catspin .75s linear infinite;filter:drop-shadow(0 0 3px color-mix(in srgb,currentColor 60%,transparent));}
+.cat-card.busy .cat-ico svg{display:none;}
+.cat-card.busy .cat-ico .cat-spin{display:block;}
+.cat-card.busy .cat-ico{animation:catglow 1.8s ease-in-out infinite;}
+@keyframes catspin{to{transform:rotate(360deg);}}
+@keyframes catglow{
+  0%,100%{border-color:color-mix(in srgb,var(--a1) 60%,rgba(255,255,255,.16));box-shadow:inset 0 1px 0 rgba(255,255,255,.17),inset 0 -8px 12px rgba(0,0,0,.16),0 0 0 0 color-mix(in srgb,var(--a1) 45%,transparent);}
+  50%{border-color:var(--a1);box-shadow:inset 0 1px 0 rgba(255,255,255,.17),inset 0 -8px 12px rgba(0,0,0,.16),0 0 0 4px color-mix(in srgb,var(--a1) 0%,transparent),0 0 13px -1px color-mix(in srgb,var(--a1) 85%,transparent);}
+}
 .cat-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}
 .cat-name{font-size:11.5px;font-weight:700;color:#fff;line-height:1.2;}
 .cat-sub{font-size:9.5px;color:#8b91a8;line-height:1.3;}
@@ -184,6 +199,52 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .sheet-title::before{display:none;}
 .sheet-close{width:24px;height:24px;background:#1b1e2e;color:#9aa0b8;font-size:15px;transform:none;}
 .sheet-close:hover{background:#2a2e44;color:#fff;transform:none;}
+/* Capture tab, built from the sheet's own parts: a segmented format switch, one
+   options card, one actions card, and a status line at the foot. Cards share the
+   16px radius and hairline dividers used by the visibility groups, and the
+   active segment uses the same accent-mixed fill as the body-type switch. */
+.cap-note{font-size:10.5px;color:#8b91a8;line-height:1.5;margin:0 0 10px;}
+/* The format chips and the background switch are ordinary controls; the only
+   thing borrowed from the panel's logo is its colour: a dark glass fill, a
+   hairline edge, and an accent-lit version of the same for the chosen state. */
+.cap-seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;flex-shrink:0;}
+.cap-seg .preset-chip{height:32px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));color:#8b91a8;font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;transition:border-color .16s,color .16s,box-shadow .2s,background .16s;}
+.cap-seg .preset-chip:hover{border-color:rgba(255,255,255,.22);color:#fff;}
+.cap-seg .preset-chip.on{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 6px 14px -10px color-mix(in srgb,var(--a1) 100%,transparent);}
+.cap-group{background:#141725;border:1px solid rgba(255,255,255,.06);border-radius:16px;margin-bottom:8px;overflow:hidden;flex-shrink:0;}
+.cap-row{display:flex;align-items:center;gap:9px;width:100%;padding:10px 11px;background:none;border:none;color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background .14s;}
+.cap-row + .cap-row{border-top:1px solid rgba(255,255,255,.055);}
+.cap-row:hover{background:#1b1f31;}
+.cap-row:active{background:#20253a;}
+.cap-row:hover .cat-ico{transform:translateY(-1px);}
+.cap-row:hover .cat-ico svg{transform:rotate(-18deg);}
+.cap-row:hover .cat-go{color:var(--a1);transform:translateX(2px);}
+/* A take in progress keeps its own live state: the row is tinted, the tile rings
+   in the accent, and the chevron becomes a stop mark while it is recording. */
+#capGif.rec{background:color-mix(in srgb,var(--accent-3) 22%,#141725);}
+#capGif.rec .cat-name,#capGif.rec .cat-go{color:var(--a1);}
+#capGif.rec .cat-ico{border-color:color-mix(in srgb,var(--a1) 75%,rgba(255,255,255,.16));box-shadow:inset 0 1px 0 rgba(255,255,255,.17),0 0 0 2px color-mix(in srgb,var(--a1) 16%,transparent);}
+/* Option row: label and state on the left, the sheet's own switch on the right. */
+.cap-opt{display:flex;align-items:center;gap:10px;padding:10px 11px;cursor:pointer;outline:none;transition:background .14s;}
+.cap-opt:hover,.cap-opt:focus-visible{background:#1b1f31;}
+.cap-opt-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}
+.cap-opt-name{font-size:11.5px;font-weight:700;color:#fff;line-height:1.2;}
+.cap-opt-sub{font-size:9.5px;color:#8b91a8;line-height:1.3;}
+.cap-opt.on .cap-opt-sub{color:color-mix(in srgb,var(--a1) 62%,#8b91a8);}
+/* A plain switch, coloured like the logo tile when it is on: glass fill, accent
+   hairline, accent glow. Nothing else about it is dressed up. */
+.cap-sw{position:relative;width:32px;height:19px;border-radius:10px;flex-shrink:0;border:1px solid rgba(255,255,255,.12);background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(0,0,0,.16));transition:border-color .16s,box-shadow .2s,background .16s;}
+.cap-sw::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#9aa0b8;transition:transform .18s,background .18s;}
+.cap-opt.on .cap-sw{border-color:color-mix(in srgb,var(--a1) 60%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.16),color-mix(in srgb,var(--a1) 42%,#141725));box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 0 12px -5px color-mix(in srgb,var(--a1) 95%,transparent);}
+.cap-opt.on .cap-sw::after{transform:translateX(13px);background:#fff;}
+/* One status line at the foot, with a dot that pulses while the host records or
+   encodes, so "working" is visible without watching the text. */
+.cap-status{display:flex;align-items:flex-start;gap:7px;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.055);font-size:10px;color:#8b91a8;line-height:1.45;min-height:34px;}
+.cap-status::before{content:'';width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-top:5px;background:#4b5169;transition:background .2s;}
+.cap-status.live::before{background:var(--a1);animation:capPulse 1.1s ease-in-out infinite;}
+.cap-status.err{color:#E2556A;}
+.cap-status.err::before{background:#E2556A;}
+@keyframes capPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--a1) 60%,transparent);opacity:1;}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--a1) 0%,transparent);opacity:.55;}}
 .sheet-inner{padding:2px 12px 14px;}
 .sheet .panel label{text-transform:none;letter-spacing:.1px;font-size:10.5px;font-weight:600;color:#8b91a8;margin:11px 0 5px;}
 .sheet .panel label.swatch{margin:0;display:block;}
@@ -234,13 +295,18 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .dock-btn:hover{background:#1f2337;color:color-mix(in srgb,var(--accent-1) 45%,#ffffff);}
 .dock-btn.active{background:linear-gradient(135deg,var(--accent-1),var(--accent-3));color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.35);}
 .sheet{--h:352;--a1:var(--accent-1);--a2:var(--accent-3);--grad:linear-gradient(135deg,var(--a1),var(--a2));background:#0E1018;}
-.sheet-header{padding:14px 12px 13px 14px;margin-bottom:8px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-3) 48%,#0B0D17),color-mix(in srgb,var(--accent-3) 26%,#0B0D17));border-bottom:1px solid rgba(255,255,255,.07);}
-.sheet-ico{width:34px;height:34px;border-radius:12px;background:linear-gradient(135deg,var(--a1),var(--a2));box-shadow:inset 0 1px 0 rgba(255,255,255,.35);}
+/* Header: a dark sheet top with a corner accent wash and a hairline accent
+   rule, instead of a solid accent banner. The icon repeats the glass-tile
+   treatment used by the action chips, so a panel never reads as a colour block. */
+.sheet-header{position:relative;padding:13px 12px 12px 14px;margin-bottom:8px;background:radial-gradient(150% 220% at -10% -40%,color-mix(in srgb,var(--a1) 20%,transparent),transparent 58%),linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,0));border-bottom:none;}
+.sheet-header::after{content:"";position:absolute;left:14px;right:12px;bottom:0;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--a1) 70%,transparent),color-mix(in srgb,var(--a1) 14%,transparent) 62%,rgba(255,255,255,.06));}
+.sheet-ico{width:34px;height:34px;border-radius:12px;display:flex;align-items:center;justify-content:center;border:1px solid color-mix(in srgb,var(--a1) 55%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.12),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 6px 14px -10px color-mix(in srgb,var(--a1) 100%,transparent);}
 .sheet-ico svg{width:17px;height:17px;}
-.sheet-title{font-size:15px;line-height:1.15;}
-.sheet-sub{font-size:10.5px;color:color-mix(in srgb,var(--accent-1) 40%,#c9cee0);margin-top:2px;font-weight:500;}
-.sheet-close{background:color-mix(in srgb,var(--accent-3) 55%,#1b1e2e);color:#fff;}
-.sheet-close:hover{background:color-mix(in srgb,var(--accent-2) 65%,#2a2e44);}
+.sheet-title{font-size:15px;line-height:1.15;font-weight:700;color:#fff;}
+.sheet-sub{font-size:10.5px;color:color-mix(in srgb,var(--a1) 34%,#9aa0b8);margin-top:2px;font-weight:500;letter-spacing:.1px;}
+.sheet-close{width:24px;height:24px;border-radius:50%;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#aab0c6;font-size:14px;transition:background .15s,border-color .15s,color .15s,transform .12s;}
+.sheet-close:hover{background:color-mix(in srgb,var(--a1) 24%,transparent);border-color:color-mix(in srgb,var(--a1) 60%,transparent);color:#fff;transform:scale(1.04);}
+.sheet-close:active{transform:scale(.95);}
 .sheet .panel label,.grid-head{color:color-mix(in srgb,var(--accent-1) 35%,#a3a9c0);}
 .sheet .panel input[type=text]:focus{border-color:var(--a1);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-1) 30%,transparent);}
 #bgGrid .bg-pick.on{box-shadow:0 0 0 2px #0E1018,0 0 0 4px var(--a1);}
@@ -302,6 +368,17 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
 .dock-btn{transition:background .15s,color .15s;}
 .dock-btn:not(.active):hover{background:color-mix(in srgb,var(--accent-2) 30%,transparent);color:var(--accent-1);}
 .dock-btn:not(.active):active{background:color-mix(in srgb,var(--accent-2) 45%,transparent);}
+/* Dock rail: the active tab is an accent-lit glass tile with a short accent
+   indicator beside it, not a filled accent block. Inactive icons keep a
+   hint of the accent so the rail still reads as one system. */
+.dock{background:linear-gradient(180deg,#141826,#0C0F18);border:1px solid rgba(255,255,255,.07);padding:6px;gap:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 12px 26px -20px #000;}
+.dock-btn{width:34px;height:34px;border-radius:12px;background:transparent;color:color-mix(in srgb,var(--accent-1) 28%,#8f96ad);transition:background .15s,color .15s,box-shadow .2s;}
+.dock-btn svg{stroke-width:1.45;}
+.dock-btn:not(.active):hover{background:rgba(255,255,255,.055);color:color-mix(in srgb,var(--accent-1) 72%,#fff);}
+.dock-btn:not(.active):active{background:rgba(255,255,255,.08);}
+.dock-btn.active{background:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.02) 58%,rgba(0,0,0,.16)),color-mix(in srgb,var(--accent-1) 17%,#12151f);color:color-mix(in srgb,var(--accent-1) 88%,#fff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent-1) 52%,transparent),inset 0 1px 0 rgba(255,255,255,.16),0 0 16px -7px color-mix(in srgb,var(--accent-1) 95%,transparent);}
+.dock-btn.active::before{content:"";display:block;position:absolute;left:-7px;top:50%;width:2px;height:17px;margin-top:-8.5px;border-radius:2px;background:var(--accent-1);box-shadow:0 0 8px color-mix(in srgb,var(--accent-1) 85%,transparent);}
+.dock-btn.active::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(85% 65% at 50% 0%,color-mix(in srgb,var(--accent-1) 24%,transparent),transparent 72%);pointer-events:none;}
 /* Panels appear/disappear INSTANTLY and never move. The Flash surface is a
    separate window above this page, so the panel is only visible through a hole
    cut for one fixed rect: a frame that slides (or fades) leaves the gap
@@ -433,6 +510,117 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
   .sheet,.sheet.tall,.sheet.wide{height:calc(100% - 12px);}
   .color-wheel{transform:scale(.9);margin:-7px 0;}
 }
+
+/* ===== Wardrobe controls: the capture panel's glass =====
+   Section and rarity keys, body type, the info toggle and the try-on row are all
+   selectable, so they take the same material as the capture format tiles: dark
+   glass with a hairline when idle, accent-lit glass - tinted fill, accent edge,
+   soft glow - when chosen. Only the colour is borrowed; the shapes stay. */
+.wd-pick-btn{background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#8b91a8;}
+.wd-pick-btn:hover,.wd-pick.open .wd-pick-btn{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));border-color:rgba(255,255,255,.22);color:#fff;}
+.wd-pick.on .wd-pick-btn,.wd-pick.on .wd-pick-btn:hover{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 6px 14px -10px color-mix(in srgb,var(--a1) 100%,transparent);}
+.wd-rand{background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#c7cee4;}
+.wd-rand:hover{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:#fff;}
+.wd-gender{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.09);}
+.wd-g{color:#8b91a8;}
+.wd-g:hover{color:#fff;background:rgba(255,255,255,.05);}
+.wd-g.on{border:1px solid color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 4px 10px -8px color-mix(in srgb,var(--a1) 100%,transparent);}
+.wd-info{background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#8b91a8;}
+.wd-info:hover{border-color:rgba(255,255,255,.22);color:#fff;}
+.wd-info.on{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 4px 10px -8px color-mix(in srgb,var(--a1) 100%,transparent);}
+.wd-row{background:linear-gradient(160deg,rgba(255,255,255,.025),rgba(255,255,255,.006) 60%,rgba(0,0,0,.1));border:1px solid rgba(255,255,255,.05);}
+.wd-row:hover{background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border-color:rgba(255,255,255,.12);}
+.wd-row.try{border-color:color-mix(in srgb,var(--a1) 62%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.1),color-mix(in srgb,var(--a1) 16%,#141725) 58%,rgba(0,0,0,.16));box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 4px 12px -9px color-mix(in srgb,var(--a1) 90%,transparent);}
+.wd-row.worn{border-color:rgba(255,255,255,.12);}
+.wd-pager .action-btn{background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#c3c8db;}
+.wd-pager .action-btn:hover:not(:disabled){border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:#fff;}
+.wd-pick-menu{background:rgba(20,24,38,.96);border-color:rgba(255,255,255,.1);}
+
+/* ===== Background controls: the capture panel's glass =====
+   Scene tiles, the size segments and the scale presets are all selectable, so
+   they use the same material: dark glass with a hairline at rest, accent-lit
+   glass - tinted fill, accent edge, soft glow - once chosen. The lit colour is
+   the tab's own accent, so this panel glows in its hue, not a fixed pink. */
+#bgGrid .bg-pick{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.09);color:#c3c8db;box-shadow:none;}
+#bgGrid .bg-pick:hover{background:linear-gradient(160deg,rgba(255,255,255,.085),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));border-color:rgba(255,255,255,.2);color:#fff;box-shadow:none;}
+#bgGrid .bg-pick.on,#bgGrid .bg-pick.on:hover{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 6px 14px -10px color-mix(in srgb,var(--a1) 100%,transparent);}
+.preset-row{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.09);}
+/* The ring is a real border on every chip, transparent when idle, so selecting
+   one cannot change the row's height and nudge everything below it. */
+.preset-row .preset-chip{border:1px solid transparent;background:none;color:#8b91a8;transition:border-color .16s,color .16s,background .16s,box-shadow .2s;}
+.preset-row .preset-chip:hover{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.045);color:#fff;}
+.preset-row .preset-chip.on{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 4px 10px -8px color-mix(in srgb,var(--a1) 100%,transparent);}
+.bgcolor-row{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.08);}
+#p-backgrounds .action-btn.small{background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#c3c8db;}
+#p-backgrounds .action-btn.small:hover{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:#fff;}
+/* ===== Sliders and scrollbars: the same glass =====
+   The size knob is a glass bead on an accent-lit rail rather than a white dot on
+   a flat bar, and scrollbars wear the glass too - the thumb is lit at rest, so a
+   list that can scroll says so without waiting for the pointer. */
+/* The filled run keeps its accent, but as an outline over glass rather than a
+   solid bar: accent-tinted glass with a lit hairline along its top and bottom,
+   both sized to the fill, on the scrollbar's own rail. */
+#p-backgrounds input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:6px;background:linear-gradient(90deg,color-mix(in srgb,var(--a1) 78%,transparent),color-mix(in srgb,var(--a1) 78%,transparent)) 0 0/var(--p) 1px no-repeat,linear-gradient(90deg,color-mix(in srgb,var(--a1) 78%,transparent),color-mix(in srgb,var(--a1) 78%,transparent)) 0 100%/var(--p) 1px no-repeat,linear-gradient(90deg,color-mix(in srgb,var(--a1) 18%,#12151f),color-mix(in srgb,var(--a1) 32%,#12151f) var(--p),rgba(0,0,0,0) var(--p)),linear-gradient(160deg,rgba(255,255,255,.035),rgba(0,0,0,.12));box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);}
+#p-backgrounds input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;margin-top:-4.5px;background:linear-gradient(160deg,rgba(255,255,255,.18),color-mix(in srgb,var(--a1) 24%,#1b2030) 58%,rgba(0,0,0,.2));border:1px solid color-mix(in srgb,var(--a1) 42%,rgba(255,255,255,.12));box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 1px 3px rgba(0,0,0,.45);}
+#p-backgrounds input[type=range]:active::-webkit-slider-thumb{background:linear-gradient(160deg,rgba(255,255,255,.26),color-mix(in srgb,var(--a1) 40%,#1b2030) 58%,rgba(0,0,0,.2));border-color:color-mix(in srgb,var(--a1) 70%,rgba(255,255,255,.2));}
+.sheet ::-webkit-scrollbar{width:6px;height:6px;}
+.sheet ::-webkit-scrollbar-track{background:linear-gradient(160deg,rgba(255,255,255,.035),rgba(0,0,0,.12));border-radius:6px;}
+.sheet ::-webkit-scrollbar-thumb{border-radius:6px;border:1px solid color-mix(in srgb,var(--a1) 42%,rgba(255,255,255,.12));background:linear-gradient(160deg,rgba(255,255,255,.18),color-mix(in srgb,var(--a1) 24%,#1b2030) 58%,rgba(0,0,0,.2));box-shadow:inset 0 1px 0 rgba(255,255,255,.2);}
+.sheet ::-webkit-scrollbar-thumb:hover{border-color:color-mix(in srgb,var(--a1) 70%,rgba(255,255,255,.2));background:linear-gradient(160deg,rgba(255,255,255,.26),color-mix(in srgb,var(--a1) 40%,#1b2030) 58%,rgba(0,0,0,.2));}
+.sheet ::-webkit-scrollbar-corner{background:transparent;}
+
+/* ===== Emotes: the capture panel's glass =====
+   The chips are momentary, so they wear the idle glass and simply brighten on
+   hover and press - there is no chosen state to light. Play, the panel's primary
+   action, takes the accent-lit glass with an accent edge instead of a solid
+   gradient block, so it stands out by its edge and text, not by a colour slab. */
+#emoteGrid .emote-btn{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.09);color:#c3c8db;}
+#emoteGrid .emote-btn:hover{background:linear-gradient(160deg,rgba(255,255,255,.085),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));border-color:rgba(255,255,255,.2);color:#fff;}
+#emoteGrid .emote-btn:active{background:linear-gradient(160deg,rgba(255,255,255,.12),rgba(255,255,255,.03) 60%,rgba(0,0,0,.18));border-color:color-mix(in srgb,var(--a1) 55%,rgba(255,255,255,.16));color:#fff;}
+#emotePlay{background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));border:1px solid color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 4px 10px -8px color-mix(in srgb,var(--a1) 100%,transparent);}
+#emotePlay:hover{filter:none;background:linear-gradient(160deg,rgba(255,255,255,.2),rgba(255,255,255,.04) 58%,rgba(0,0,0,.18));border-color:color-mix(in srgb,var(--a1) 72%,rgba(255,255,255,.2));}
+
+/* ===== Settings cards and switches: the capture panel's glass =====
+   The grouped cards every panel uses become glass plates, and the switches trade
+   their solid accent pill for the lit-glass one: tinted fill with an accent edge
+   drawn as an inset ring, so the switch never changes size when it toggles. */
+.sheet .panel .group{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.08);}
+.sheet .panel input[type=checkbox]{background:linear-gradient(160deg,rgba(255,255,255,.08),rgba(255,255,255,.02) 60%,rgba(0,0,0,.16));border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.1);}
+.sheet .panel input[type=checkbox]:hover{border-color:rgba(255,255,255,.24);}
+.sheet .panel input[type=checkbox]::before{background:linear-gradient(160deg,#fff,color-mix(in srgb,var(--a1) 18%,#fff) 58%,color-mix(in srgb,var(--a1) 40%,#c9cfe0));box-shadow:0 1px 2px rgba(0,0,0,.5);}
+.sheet .panel input[type=checkbox]:checked{background:linear-gradient(160deg,rgba(255,255,255,.13),color-mix(in srgb,var(--a1) 22%,#141826) 58%,rgba(0,0,0,.18));border:none;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a1) 70%,rgba(255,255,255,.22)),0 3px 10px -6px color-mix(in srgb,var(--a1) 100%,transparent);}
+.sheet .panel input[type=checkbox]:checked::before{background:linear-gradient(160deg,#fff,color-mix(in srgb,var(--a1) 24%,#fff) 55%,color-mix(in srgb,var(--a1) 48%,#dbe0ef));}
+
+/* ===== Log: the capture panel's glass =====
+   Copy and Clear are the same glass buttons as everywhere else, and the console
+   itself is a recessed glass plate - darker than the cards so the monospace text
+   keeps its contrast, with a hairline edge and an inner top highlight. */
+.log-actions .action-btn{background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.1);color:#c3c8db;}
+.log-actions .action-btn:hover{border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:#fff;}
+.monitor{background:linear-gradient(160deg,rgba(255,255,255,.045),rgba(255,255,255,.008) 60%,rgba(0,0,0,.22));border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);}
+
+/* ===== Color Custom: the capture panel's glass =====
+   The channel strip is a glass plate, the armed channel is the lit glass tile
+   with an accent ring on its dot, and the wheel and brightness rail take the
+   accent hairline and glass knob so the panel belongs to the same set. The wheel
+   keeps its own hue map and the rail keeps black-to-colour, since those are the
+   readings, not decoration. */
+.sheet .panel .chan-row{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 60%,rgba(0,0,0,.14));border:1px solid rgba(255,255,255,.09);}
+.sheet .panel .chan{color:#8b91a8;}
+.sheet .panel .chan:hover{background:rgba(255,255,255,.05);color:#fff;}
+.sheet .panel .chan.on{background:linear-gradient(160deg,rgba(255,255,255,.13),rgba(255,255,255,.025) 58%,rgba(0,0,0,.18));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);}
+.sheet .panel .chan.on .cd{box-shadow:0 0 0 2px #141826,0 0 0 3.5px color-mix(in srgb,var(--a1) 85%,#fff);}
+.sheet .panel .hs-wheel{box-shadow:0 0 0 4px #141826,0 0 0 5px color-mix(in srgb,var(--a1) 45%,rgba(255,255,255,.12)),0 10px 22px -16px color-mix(in srgb,var(--a1) 100%,transparent);}
+.sheet .panel .hexdot{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a1) 40%,rgba(255,255,255,.16));}
+.sheet .panel input.val-slider[type=range]::-webkit-slider-runnable-track{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--a1) 55%,rgba(255,255,255,.18)),0 3px 10px -8px color-mix(in srgb,var(--a1) 90%,transparent);}
+.sheet .panel input.val-slider[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;margin-top:-3px;background:linear-gradient(160deg,#fff,rgba(255,255,255,.72) 54%,rgba(255,255,255,.42));border:1px solid color-mix(in srgb,var(--a1) 55%,rgba(255,255,255,.5));box-shadow:inset 0 1px 0 #fff,0 1px 3px rgba(0,0,0,.45),0 0 0 3px color-mix(in srgb,var(--a1) 14%,transparent);}
+
+/* ===== Close buttons: hover in the same glass =====
+   The panel X keeps its shape and idle look; on hover it becomes the lit glass
+   tile every other control uses - tinted fill, accent edge, inner highlight and
+   a small glow - instead of a flat translucent tint. */
+.sheet-close:hover{background:linear-gradient(160deg,rgba(255,255,255,.16),rgba(255,255,255,.03) 58%,rgba(0,0,0,.2));border-color:color-mix(in srgb,var(--a1) 58%,rgba(255,255,255,.14));color:color-mix(in srgb,var(--a1) 90%,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 5px 12px -8px color-mix(in srgb,var(--a1) 100%,transparent);}
+.sheet-close:active{background:linear-gradient(160deg,rgba(255,255,255,.22),rgba(255,255,255,.04) 58%,rgba(0,0,0,.2));border-color:color-mix(in srgb,var(--a1) 72%,rgba(255,255,255,.2));transform:scale(.95);}
 </style>
 <link rel="stylesheet" href="drop.css">
 </head>
@@ -483,13 +671,48 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
           </div>
         </div>
         <button class="cat-card" id="btnCatalogSync" title="Find items on aqcloset.com that this database does not have">
-          <span class="cat-ico"><svg viewBox="0 0 16 16"><path d="M13.6 8A5.6 5.6 0 1 1 8 2.4a5.6 5.6 0 0 1 4 1.7"/><path d="M13.9 1.8v3.4h-3.4"/></svg></span>
+          <span class="cat-ico"><svg viewBox="0 0 16 16"><path d="M13.6 8A5.6 5.6 0 1 1 8 2.4a5.6 5.6 0 0 1 4 1.7"/><path d="M13.9 1.8v3.4h-3.4"/></svg><span class="cat-spin" aria-hidden="true"></span></span>
           <span class="cat-txt">
             <span class="cat-name">Catalog sync</span>
             <span class="cat-sub" id="catalogSyncInfo">Add items aqcloset.com has that we are missing</span>
           </span>
           <span class="cat-go">&#8250;</span>
         </button>
+      </div>
+      <div class="panel" id="p-capture">
+        <div class="cap-note">Copy the preview as a still, or record the animation as a looping clip. Both land on the clipboard.</div>
+        <div class="cap-seg" id="capFmt" role="tablist" aria-label="Clip format">
+          <div class="preset-chip on" data-fmt="gif" role="tab" aria-selected="true" title="GIF: 256 colours, the format every chat client animates">GIF</div>
+          <div class="preset-chip" data-fmt="webp" role="tab" aria-selected="false" title="Animated WebP: lossless full colour, animated in Discord too">WebP</div>
+        </div>
+        <div class="cap-group">
+          <div class="cap-opt" id="capCut" role="switch" aria-checked="false" tabindex="0" title="Drop the scene and keep the character, on a transparent background">
+            <span class="cap-opt-txt">
+              <span class="cap-opt-name">No background</span>
+              <span class="cap-opt-sub" id="capCutSub">Keeps the scene behind the character</span>
+            </span>
+            <span class="cap-sw" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div class="cap-group">
+          <button class="cap-row" id="capShot" title="Copy the preview to the clipboard">
+            <span class="cat-ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.2 5.6h2.5L5.8 3.9h4.4l1.1 1.7h2.5v7.2H2.2z"/><circle cx="8" cy="9.1" r="2.2"/></svg></span>
+            <span class="cat-txt">
+              <span class="cat-name">Copy image</span>
+              <span class="cat-sub" id="capShotSub">The preview, as a PNG</span>
+            </span>
+            <span class="cat-go">&#8250;</span>
+          </button>
+          <button class="cap-row" id="capGif" title="Record the animation as a looping clip">
+            <span class="cat-ico"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.2" width="12" height="9.6" rx="1.6"/><path d="M6.4 6.2v3.6l3.2-1.8z"/></svg></span>
+            <span class="cat-txt">
+              <span class="cat-name" id="capGifName">Record GIF</span>
+              <span class="cat-sub" id="capGifSub">256 colours &middot; Discord animates it</span>
+            </span>
+            <span class="cat-go" id="capGifGo">&#8250;</span>
+          </button>
+        </div>
+        <div class="cap-status" id="capStatus">Nothing copied yet.</div>
       </div>
       <div class="panel" id="p-wardrobe">
         <div class="wd-find">
@@ -599,6 +822,9 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
     <button class="dock-btn active" data-t="monitor" title="Monitor">
       <svg viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="8.5" rx="1.2"/><path d="M4 6.5l2 2.5 1.5-3 1.5 2 2-3.5"/><path d="M6 14h4M8 11.5V14"/></svg>
     </button>
+    <button class="dock-btn" data-t="capture" title="Capture">
+      <svg viewBox="0 0 16 16"><path d="M2.2 5.6h2.5L5.8 3.9h4.4l1.1 1.7h2.5v7.2H2.2z"/><circle cx="8" cy="9.1" r="2.2"/></svg>
+    </button>
     <button class="dock-btn" data-t="wardrobe" title="Wardrobe">
       <svg viewBox="0 0 16 16"><path d="M6.5 4.2a1.5 1.5 0 1 1 1.5 1.5c-.5 0-.9.4-.9.9v.9"/><path d="M7.1 7.5L1.8 11.3c-.6.4-.3 1.2.4 1.2h11.6c.7 0 1-.8.4-1.2L8.9 7.5"/></svg>
     </button>
@@ -666,6 +892,12 @@ function post(method, args) {
       case 'wardrobeFetch': return __fb.beginWardrobeFetch(args.slot, args.file, args.gender || 'F', args.dir || '').then(awaitJob);
       case 'gearClicks': return __fb.takeGearClicks();
       case 'copyLog': return __fb.copyLog();
+      case 'snapImage': return __fb.snapImage();
+  case 'snapChar': return __fb.snapChar();
+      // 1/0 rather than a boolean: the host object drops bool arguments.
+  case 'gifStart': return __fb.gifStart(args.ms || 8000, args.fmt || 'gif', args.cut ? 1 : 0);
+      case 'gifStop': return __fb.gifStop();
+      case 'gifPoll': return __fb.gifPoll();
       case 'pickFolder': return __fb.pickFolder();
       case 'getAppDir': return __fb.getAppDir();
       case 'getLog': return __fb.getLog();
@@ -701,7 +933,10 @@ function __makeMockHost() {
     charLoadPoll: () => ok(JSON.stringify({ done: true, ok: true, total: 0, items: [] })),
     jobResult: id => ok(id === 'mock-dl' ? JSON.stringify({ items: [] })
       : JSON.stringify({ ok: false, error: 'Preview mode \u2013 not connected to the Manikin app.' })),
-    takeGearClicks: () => ok('[]'), copyLog: () => ok(true),
+    takeGearClicks: () => ok('[]'), copyLog: () => ok(true), snapImage: () => ok(true), snapChar: () => ok(true),
+    gifStart: () => ok(true), gifStop: () => ok(JSON.stringify({ done: true, ok: false, error: 'Preview mode' })),
+    snapChar: () => ok(true),
+    gifPoll: () => ok(JSON.stringify({ recording: false, frames: 0, ms: 0, done: false })),
     themeColor: () => ok(), reportOverlayRects: () => ok(),
     startResize: () => ok(), isMaximized: () => ok(false), setOverlaysHidden: () => ok(),
     pickFolder: () => ok(''), getAppDir: () => ok(''),
@@ -1106,10 +1341,10 @@ setTimeout(() => {
 let activeTab = 'monitor';
 const sheetEl = document.getElementById('sheet');
 const sheetTitleEl = document.getElementById('sheetTitle');
-const TAB_TITLES = { monitor: 'Monitor', wardrobe: 'Wardrobe', backgrounds: 'Background', emotes: 'Emotes', names: 'Settings', colors: 'Color Custom', misc: 'Visibility', log: 'Log' };
+const TAB_TITLES = { monitor: 'Monitor', capture: 'Capture', wardrobe: 'Wardrobe', backgrounds: 'Background', emotes: 'Emotes', names: 'Settings', colors: 'Color Custom', misc: 'Visibility', log: 'Log' };
 let themeHue = 352;
-const TAB_HUES = { monitor: 352, wardrobe: 352, backgrounds: 352, emotes: 352, names: 352, colors: 352, misc: 352, log: 352 };
-const TAB_SUBS = { monitor: 'Character data', wardrobe: 'Try on catalog items', backgrounds: 'Pick a scene', emotes: 'Play an animation', names: 'Names, window & output', colors: 'Colors, theme & scale', misc: 'Visibility & output', log: 'Debug output' };
+const TAB_HUES = { monitor: 352, capture: 352, wardrobe: 352, backgrounds: 352, emotes: 352, names: 352, colors: 352, misc: 352, log: 352 };
+const TAB_SUBS = { monitor: 'Character data', capture: 'Screenshots & GIFs', wardrobe: 'Try on catalog items', backgrounds: 'Pick a scene', emotes: 'Play an animation', names: 'Names, window & output', colors: 'Colors, theme & scale', misc: 'Visibility & output', log: 'Debug output' };
 const TALL_TABS = ['backgrounds', 'emotes', 'monitor', 'log'];
 let uiLockUntil = 0;
 function uiLocked() { try { return !window.__noUiLock && performance.now() < uiLockUntil; } catch (e) { return false; } }
@@ -1169,6 +1404,130 @@ async function refreshSideLog() {
 function startSideLog() { refreshSideLog(); if (!sideLogTimer) sideLogTimer = setInterval(refreshSideLog, 1000); }
 function stopSideLog() { if (sideLogTimer) { clearInterval(sideLogTimer); sideLogTimer = null; } }
 document.getElementById('btnClearSideLog').onclick = async () => { await post('clearLog'); refreshSideLog(); };
+// Capture tab: a still and a GIF, both rendered by the host from the Flash
+// surface rather than grabbed off the screen, so they contain the character and
+// never the panels or window chrome.
+const capStatusEl = document.getElementById('capStatus');
+let capGifTimer = null;
+let capFmt = 'gif';   // GIF is the default: every chat client animates it
+let capCut = false;   // "No background": copy the character alone, transparent PNG
+// The format is read back from the chip that is actually lit, so what the panel
+// says and what the host records cannot drift apart.
+function capSelectedFormat() {
+  const on = document.querySelector('#capFmt .preset-chip.on');
+  return on && on.dataset.fmt === 'webp' ? 'webp' : 'gif';
+}
+function capName(f) { return f === 'webp' ? 'WebP' : 'GIF'; }
+function capFmtLabel() {
+  const f = capSelectedFormat();
+  capFmt = f;
+  document.getElementById('capGifName').textContent = 'Record ' + capName(f);
+  document.getElementById('capGifSub').textContent = f === 'webp'
+    ? 'Lossless colour \u00B7 Discord animates it'
+    : '256 colours \u00B7 Discord animates it';
+  document.querySelectorAll('#capFmt .preset-chip').forEach(c =>
+    c.setAttribute('aria-selected', c.classList.contains('on') ? 'true' : 'false'));
+}
+document.querySelectorAll('#capFmt .preset-chip').forEach(chip => {
+  chip.onclick = () => {
+    document.querySelectorAll('#capFmt .preset-chip').forEach(c => c.classList.toggle('on', c === chip));
+    capFmtLabel();
+    capSay(capSelectedFormat() === 'gif'
+      ? 'GIF selected: what every chat client animates.'
+      : 'WebP selected: lossless full colour, and Discord animates it.');
+  };
+});
+capFmtLabel();   // the row names the format from the start, not just after a click
+function capSay(text, bad) {
+  capStatusEl.textContent = text;
+  capStatusEl.classList.toggle('err', !!bad);
+  // The dot pulses only while the host is actually working, so the line reads as
+  // a state, not just a message.
+  capStatusEl.classList.toggle('live', /^(Recording|Encoding)/.test(text));
+}
+function capIdle() {
+  document.getElementById('capGif').classList.remove('rec');
+  capFmtLabel();
+  document.getElementById('capGifGo').textContent = '\u203A';
+}
+function capFinish(st) {
+  capIdle();
+  if (!st || !st.done) return;
+  if (st.ok) {
+    const bits = capName(st.fmt) + ' \u00B7 ' + (st.frames === 1 ? '1 frame' : st.frames + ' frames') + ' \u00B7 ' +
+      (st.ms / 1000).toFixed(1) + 's \u00B7 ' + Math.max(1, Math.round(st.bytes / 1024)) + ' KB';
+    capSay(bits + ' \u2014 copied to the clipboard.');
+  } else capSay('Recording failed: ' + (st.error || 'unknown error'), true);
+}
+const capCutRow = document.getElementById('capCut');
+capCutRow.onclick = () => {
+  capCut = !capCut;
+  capCutRow.classList.toggle('on', capCut);
+  capCutRow.setAttribute('aria-checked', capCut ? 'true' : 'false');
+  document.getElementById('capCutSub').textContent = capCut
+    ? 'Character only, on a transparent background'
+    : 'Keeps the scene behind the character';
+  document.getElementById('capShotSub').textContent = capCut ? 'Character only, as a PNG' : 'The preview, as a PNG';
+};
+capCutRow.onkeydown = e => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); capCutRow.click(); }
+};
+document.getElementById('capShot').onclick = async () => {
+  const ok = await post(capCut ? 'snapChar' : 'snapImage');
+  if (ok) capSay(capCut ? 'Character copied as a transparent PNG.' : 'Image copied to the clipboard.');
+  else capSay(capCut ? 'Could not cut out the character.' : 'Could not copy the preview.', true);
+};
+// The host encodes a take on a worker after the button is released: a lossless
+// WebP at full resolution can take a while, and the window has to stay usable
+// meanwhile. Poll that take until it reports done, ignoring a newer take.
+function capWaitEncoding(take) {
+  if (capGifTimer) { clearInterval(capGifTimer); capGifTimer = null; }
+  capIdle();
+  const label = capName(capFmt);
+  capSay('Encoding ' + label + '\u2026');
+  capGifTimer = setInterval(async () => {
+    const st = JSON.parse(await post('gifPoll') || '{}');
+    if (st.take !== take) { clearInterval(capGifTimer); capGifTimer = null; return; }
+    if (st.done) {
+      clearInterval(capGifTimer);
+      capGifTimer = null;
+      capFinish(st);
+      return;
+    }
+    capSay('Encoding ' + label + '\u2026');
+  }, 250);
+}
+document.getElementById('capGif').onclick = async () => {
+  const b = document.getElementById('capGif');
+  if (b.classList.contains('rec')) {
+    if (capGifTimer) { clearInterval(capGifTimer); capGifTimer = null; }
+    const st = JSON.parse(await post('gifStop') || '{}');
+    if (st.done) capFinish(st);
+    else capWaitEncoding(st.take);
+    return;
+  }
+  const fmt = capSelectedFormat();
+  // "No background" applies to clips as well: the host recovers per-frame alpha.
+  const started = await post('gifStart', { ms: 8000, fmt: fmt, cut: capCut });
+  if (!started) { capSay('Could not start recording.', true); return; }
+  b.classList.add('rec');
+  document.getElementById('capGifName').textContent = 'Stop recording';
+  document.getElementById('capGifSub').textContent = 'Recording\u2026';
+  document.getElementById('capGifGo').textContent = '\u25A0';
+  capSay('Recording ' + capName(fmt) + '\u2026');
+  capGifTimer = setInterval(async () => {
+    const st = JSON.parse(await post('gifPoll') || '{}');
+    if (st.recording) {
+      capSay('Recording ' + capName(st.fmt) + '\u2026 ' + (st.ms / 1000).toFixed(1) + 's \u00B7 ' + st.frames + ' frames');
+      return;
+    }
+    clearInterval(capGifTimer);
+    capGifTimer = null;
+    if (st.done) capFinish(st);
+    else capWaitEncoding(st.take);
+  }, 250);
+};
+
 document.getElementById('btnCopyLog').onclick = async () => {
   const b = document.getElementById('btnCopyLog');
   const ok = await post('copyLog');

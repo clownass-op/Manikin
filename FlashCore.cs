@@ -470,6 +470,85 @@ namespace ManikinApp
         [StructLayout(LayoutKind.Sequential)]
         struct RECTL { public int left, top, right, bottom; }
 
+        // Render the current frame into a bitmap (IViewObject::Draw on the OCX),
+        // so snapshots work even when the host window is offscreen. The player
+        // always draws at its own on-screen size: a larger destination is NOT
+        // supersampled (the extra area stays transparent) and a smaller one clips
+        // the scene, so the bitmap matches the control exactly.
+        // Render the movie larger than its panel, temporarily. The player
+        // rasterises at the size of its control (the destination rect only clips),
+        // so a bigger control is real extra detail for grabs rather than upscaled
+        // pixels. RestoreSize puts the player back in its panel.
+        bool _big;
+
+        public void Supersample(int w, int h)
+        {
+            if (_flash == null || _big) return;
+            try
+            {
+                _flash.Dock = DockStyle.None;
+                _flash.Location = new Point(0, 0);
+                _flash.Size = new Size(Math.Max(1, w), Math.Max(1, h));
+                _big = true;
+            }
+            catch { }
+        }
+
+        public void RestoreSize()
+        {
+            if (_flash == null || !_big) return;
+            try { _flash.Dock = DockStyle.Fill; } catch { }
+            _big = false;
+        }
+
+        // A cut-out take swaps the player's backdrop between black and white, which
+        // is the capture working, not the scene: on screen that was a strobe. Shield()
+        // covers the player with a frame the take hands in, so the preview shows the
+        // cut-out clip itself and the flashing stays off screen. Each call replaces
+        // the picture and disposes the one before it.
+        PictureBox _cover;
+
+        public bool Shielding
+        {
+            get { return _cover != null && _cover.Visible; }
+        }
+
+        public void Shield(Bitmap still)
+        {
+            try
+            {
+                if (still == null)
+                {
+                    if (_cover == null) return;
+                    _cover.Visible = false;
+                    var old = _cover.Image;
+                    _cover.Image = null;
+                    if (old != null) old.Dispose();
+                    return;
+                }
+                if (_cover == null)
+                {
+                    _cover = new PictureBox
+                    {
+                        Dock = DockStyle.Fill,
+                        SizeMode = PictureBoxSizeMode.Zoom,
+                        BackColor = Color.FromArgb(8, 10, 14),
+                    };
+                    Controls.Add(_cover);
+                }
+                if (!ReferenceEquals(_cover.Image, still))
+                {
+                    var old = _cover.Image;
+                    _cover.Image = null;   // drop the reference before disposing it
+                    if (old != null) old.Dispose();
+                    _cover.Image = still;
+                }
+                _cover.Visible = true;
+                _cover.BringToFront();
+            }
+            catch { }
+        }
+
         public Bitmap Snapshot()
         {
             if (_flash == null) return null;
@@ -525,6 +604,14 @@ namespace ManikinApp
             }
             else
                 Call("clearBackground");
+        }
+
+        // Solid colour behind the avatar only (the player fills its customBg
+        // clip), used to render the same frame over two different backdrops for
+        // the cut-out capture.
+        public void SetBackgroundColor(int rgb)
+        {
+            try { Call("setBackgroundColor", rgb.ToString(System.Globalization.CultureInfo.InvariantCulture)); } catch { }
         }
 
         // "#RRGGBB" (or "RRGGBB") -> 0xRRGGBB.

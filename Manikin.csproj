@@ -53,6 +53,9 @@
     <Compile Include="AppForm.cs" />
     <Compile Include="Headless.cs" />
     <Compile Include="Wardrobe.cs" />
+    <Compile Include="GifWriter.cs" />
+    <Compile Include="WebpWriter.cs" />
+    <Compile Include="Matte.cs" />
     <Compile Include="CatalogSync.cs" />
     <!-- Not in the repo: build it with tools\build_wardrobe.py. Optional so a
          checkout without it still builds (the Wardrobe then says so). -->
@@ -144,4 +147,9 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="packages\Microsoft.Web.WebView2\build\Microsoft.Web.WebView2.targets" Condition="Exists('packages\Microsoft.Web.WebView2\build\Microsoft.Web.WebView2.targets')" />
+  <ItemGroup>
+    <None Include="tools\ffmpeg.exe" Condition="Exists('tools\ffmpeg.exe')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

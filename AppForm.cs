@@ -187,6 +187,20 @@ namespace ManikinApp
         // Copy the whole debug log to the clipboard (Log tab button).
         public bool CopyLog() { return Ui(() => _form.DoCopyLog()); }
 
+        // Copy the preview to the clipboard as an image (camera button).
+        public bool SnapImage() { return Ui(() => _form.DoSnapImage()); }
+        // Copy the character alone, scene removed, as a transparent PNG. The page
+        // calls this as snapChar, so the COM name has to match exactly.
+        public bool SnapChar() { return Ui(() => _form.DoSnapCutout()); }
+
+        // Record the preview's animation as a GIF and copy it (Capture tab).
+        // An int flag rather than a bool: IDispatch drops boolean arguments on
+        // this host object, and a silent false is what made cut-out takes record
+        // the scene.
+        public bool GifStart(int ms, string fmt, int cut) { return Ui(() => _form.BeginGif(ms, fmt, cut != 0)); }
+        public string GifStop() { return Ui(() => _form.StopGif()); }
+        public string GifPoll() { return Ui(() => _form.GifPoll()); }
+
         static string LoadCharCore(string name)
         {
             try
@@ -1781,9 +1795,20 @@ namespace ManikinApp
 
         static readonly string DebugLog = Path.Combine(Path.GetTempPath(), "fb-debug.log");
 
+        // One writer at a time: the UI thread and a take's encode thread both log,
+        // and a File.AppendAllText that collides throws "file in use", which the
+        // catch below would swallow - lines disappeared exactly when a take was
+        // being encoded, which is when they mattered.
+        static readonly object _dbgLock = new object();
+
         public static void Dbg(string line)
         {
-            try { File.AppendAllText(DebugLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + Environment.NewLine); } catch { }
+            try
+            {
+                lock (_dbgLock)
+                    File.AppendAllText(DebugLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + Environment.NewLine);
+            }
+            catch { }
         }
 
         // Many lines in one write: a bulk insert logging per row would crawl
@@ -1796,7 +1821,7 @@ namespace ManikinApp
                 var sb = new System.Text.StringBuilder();
                 string stamp = DateTime.Now.ToString("HH:mm:ss.fff");
                 foreach (var line in lines) sb.Append(stamp).Append(' ').Append(line).Append(Environment.NewLine);
-                if (sb.Length > 0) File.AppendAllText(DebugLog, sb.ToString());
+                if (sb.Length > 0) { lock (_dbgLock) File.AppendAllText(DebugLog, sb.ToString()); }
             }
             catch { }
         }
@@ -2528,8 +2553,746 @@ namespace ManikinApp
             }
             catch (Exception ex) { Dbg("CopyLog EX: " + ex.Message); return false; }
         }
+        // Copy the current preview to the clipboard as an image. The bitmap
+        // comes from FlashCore.Snapshot() (IViewObject::Draw), not from the
+        // screen, so it captures the render even when another window covers
+        // it and it never includes our own panels or the window frame.
+        // The Bitmap format paints into Paint/Word; the PNG stream is what
+        // browsers, Electron apps (Discord, Slack) and chat clients read.
+        public bool DoSnapImage()
+        {
+            Bitmap bmp = null;
+            try
+            {
+                if (_flash == null) return false;
+                // 2x the preview, capped: the player renders vectors at the
+                // control's size, so this is extra real detail, not upscaling.
+                int pw = Math.Max(1, _flash.Width), ph = Math.Max(1, _flash.Height);
+                double sc = Math.Min(2.0, 2600.0 / Math.Max(pw, ph));
+                int sw = Math.Max(2, (int)Math.Round(pw * sc));
+                int sh = Math.Max(2, (int)Math.Round(ph * sc));
+                bool big = sw > pw + 2 || sh > ph + 2;
+                if (big) _flash.Supersample(sw, sh);
+                try { bmp = _flash.Snapshot(); }
+                finally { if (big) _flash.RestoreSize(); }
+                if (bmp == null || bmp.Width < 2 || bmp.Height < 2) return false;
+                var data = new DataObject();
+                data.SetData(DataFormats.Bitmap, true, bmp);
+                using (var ms = new MemoryStream())
+                {
+                    bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    ms.Position = 0;
+                    data.SetData("PNG", false, ms);
+                    Clipboard.SetDataObject(data, true);   // copy: the stream can close after this
+                }
+                return true;
+            }
+            catch (Exception ex) { Dbg("SnapImage EX: " + ex.Message); return false; }
+            finally { if (bmp != null) bmp.Dispose(); }
+        }
+
+        // Copy the character alone: the scene is swapped for black and then for
+        // white behind the avatar, and the two renders give the alpha channel
+        // (see Matte.Cut). The scene the user picked is put back in the same
+        // call, so the preview only flickers for the two frames it takes.
+        public bool DoSnapCutout()
+        {
+            Bitmap dark = null, light = null, cut = null;
+            try
+            {
+                if (_flash == null) return false;
+                int pw = Math.Max(1, _flash.Width), ph = Math.Max(1, _flash.Height);
+                double sc = Math.Min(2.0, 2600.0 / Math.Max(pw, ph));
+                int sw = Math.Max(2, (int)Math.Round(pw * sc));
+                int sh = Math.Max(2, (int)Math.Round(ph * sc));
+                bool big = sw > pw + 2 || sh > ph + 2;
+                try
+                {
+                    if (big) _flash.Supersample(sw, sh);
+                    _flash.SetBackgroundColor(0x000000);
+                    dark = _flash.Snapshot();
+                    _flash.SetBackgroundColor(0xFFFFFF);
+                    light = _flash.Snapshot();
+                }
+                finally
+                {
+                    try { _flash.LoadBackground(_bgName); } catch { }
+                    if (big) _flash.RestoreSize();
+                }
+                if (dark == null || light == null) return false;
+                cut = Matte.Cut(dark, light);
+                if (cut == null || cut.Width < 2 || cut.Height < 2) return false;
+                var data = new DataObject();
+                data.SetData(DataFormats.Bitmap, true, cut);
+                using (var ms = new MemoryStream())
+                {
+                    cut.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    ms.Position = 0;
+                    // The PNG stream is what carries the transparency: the DIB
+                    // clipboard format is what a plain picture paste would read,
+                    // and several clients flatten its alpha.
+                    data.SetData("PNG", false, ms);
+                    Clipboard.SetDataObject(data, true);
+                }
+                return true;
+            }
+            catch (Exception ex) { Dbg("SnapCutout EX: " + ex.Message); return false; }
+            finally
+            {
+                if (dark != null) dark.Dispose();
+                if (light != null) light.Dispose();
+                if (cut != null) cut.Dispose();
+            }
+        }
+
+        // ---- GIF recording -------------------------------------------------
+        // The preview is sampled on a timer while the animation plays, but only
+        // frames that really changed are kept, and each keeps its own timestamp.
+        // That way the GIF's delays follow the animation, not the timer's jitter,
+        // and Flash dropping a tick can never duplicate a frame.
+        Timer _gifTimer;
+        List<Bitmap> _gifFrames;
+        List<int> _gifTimes;
+        System.Diagnostics.Stopwatch _gifClock;
+        int _gifHash, _gifMaxMs = 8000, _gifCaptureW, _gifCaptureH, _gifMaxFrames = 180;
+        bool _gifRunning, _gifFinished, _gifOk;
+        string _gifError = "", _gifFile = "";
+        int _gifBytes, _gifOut, _gifMsOut, _gifW, _gifH;
+
+        string _gifFormat = "gif";
+        // Cut-out take: the scene is swapped for black and every kept frame is
+        // rendered a second time over white, so the clip keeps real alpha.
+        bool _gifCut;
+        // A take's encode runs on a worker (see EncodeTake), so these two flags
+        // and the take id are the only state the UI thread and that worker share.
+        bool _gifEncoding;
+        int _gifTake;
+        readonly object _gifLock = new object();
+        readonly object _encodeLock = new object();
+
+        public bool BeginGif(int ms, string fmt, bool cut)
+        {
+            if (_flash == null) return false;
+            string want = (fmt ?? "").Trim().ToLowerInvariant();
+            _gifFormat = want == "webp" ? "webp" : "gif";
+            _gifCut = cut;
+            Dbg("take begin: " + _gifFormat + " cut=" + _gifCut + " " +
+                Math.Max(1, _flash.Width) + "x" + Math.Max(1, _flash.Height));
+            DropGifFrames();
+            // A take records the preview at the size it is on screen. It used to be
+            // rendered 1.5x-2x larger for extra detail, but Supersample resizes the
+            // live player, so the preview visibly zoomed for the whole take and
+            // every frame cost that many more pixels to draw - fewer frames per
+            // second, which is what made the clip stutter.
+            // A cut-out take still has to repaint the backdrop black and white, so
+            // the player is covered and the cover follows the take (see GifTick).
+            // It starts as the current frame, so nothing flashes white before the
+            // first recorded frame lands.
+            if (_gifCut)
+            {
+                Bitmap frozen = null;
+                try { frozen = _flash.Snapshot(); } catch { }
+                try { _flash.Shield(frozen); } catch { }   // FlashCore owns the bitmap now
+            }
+            // The take runs over black; StopGif puts the chosen scene back.
+            if (_gifCut) { try { _flash.SetBackgroundColor(0x000000); } catch { } }
+            _gifFrames = new List<Bitmap>();
+            _gifTimes = new List<int>();
+            _gifHash = 0;
+            _gifCaptureW = 0;
+            _gifCaptureH = 0;
+            _gifMaxFrames = 180;
+            _gifMaxMs = Math.Max(1000, Math.Min(15000, ms));
+            _gifTake++;
+            _gifEncoding = false;
+            _gifRunning = true; _gifFinished = false; _gifOk = false;
+            _gifError = ""; _gifFile = "";
+            _gifBytes = 0; _gifOut = 0; _gifMsOut = 0; _gifW = 0; _gifH = 0;
+            _gifClock = System.Diagnostics.Stopwatch.StartNew();
+            _gifTimer = new Timer { Interval = 15 };
+            _gifTimer.Tick += GifTick;
+            _gifTimer.Start();
+            return true;
+        }
+
+        void GifTick(object sender, EventArgs e)
+        {
+            if (!_gifRunning || _flash == null) return;
+            // The stop test lives here as well as at the end: a tick that fails to
+            // draw returns early below, and a run of those used to keep a take
+            // going well past its length (a 900 ms take ran 1.6 s and recorded
+            // 39 frames instead of ~20).
+            if (_gifClock != null && (_gifClock.ElapsedMilliseconds >= _gifMaxMs ||
+                (_gifFrames != null && _gifFrames.Count >= _gifMaxFrames)))
+            {
+                StopGif();
+                return;
+            }
+            Bitmap shot = null, white = null, frame = null;
+            try
+            {
+                // A cut-out take always renders over white first: the silhouette is
+                // crisp there, so motion is visible even for a character drawn
+                // mostly in black. The same frame over black then gives the matte.
+                if (_gifCut)
+                {
+                    try { _flash.SetBackgroundColor(0xFFFFFF); white = _flash.Snapshot(); } catch { }
+                    if (white == null) return;
+                }
+                else
+                {
+                    try { shot = _flash.Snapshot(); } catch { }
+                    if (shot == null) return;
+                }
+
+                int hash = FrameHash(_gifCut ? white : shot);
+                if (_gifFrames.Count == 0 || hash != _gifHash)
+                {
+                    _gifHash = hash;
+                    if (_gifCut)
+                    {
+                        try
+                        {
+                            _flash.SetBackgroundColor(0x000000);
+                            shot = _flash.Snapshot();
+                            _flash.SetBackgroundColor(0xFFFFFF);
+                        }
+                        catch { }
+                        if (shot != null) frame = Matte.Recover(shot, white);
+                    }
+                    else frame = shot;
+                }
+
+                if (frame != null)
+                {
+                    // The cover follows the take, so a cut-out recording shows the
+                    // clip being made (moving) rather than a frozen picture, and the
+                    // black/white flip behind it stays off screen.
+                    if (_gifCut) { try { _flash.Shield((Bitmap)frame.Clone()); } catch { } }
+                    if (_gifCaptureW == 0) ResolveGifSize(frame.Width, frame.Height);
+                    if (_gifCaptureW == frame.Width && _gifCaptureH == frame.Height)
+                    {
+                        _gifFrames.Add(frame);   // lossless: exactly as rendered
+                        // The list owns it now. For a plain take frame *is* shot (a
+                        // cut-out frame is a separate matte), and the finally below
+                        // disposes shot - which freed every full-size frame the moment
+                        // it was kept. GIF only survived because it records from a
+                        // scaled copy; WebP at native size did not.
+                        if (ReferenceEquals(frame, shot)) shot = null;
+                        if (ReferenceEquals(frame, white)) white = null;
+                        frame = null;
+                    }
+                    else
+                    {
+                        // The player only ever draws at its own size, so shrinking for
+                        // GIF happens here, once per kept frame.
+                        _gifFrames.Add(ScaleTo(frame, _gifCaptureW, _gifCaptureH));
+                    }
+                    _gifTimes.Add((int)_gifClock.ElapsedMilliseconds);
+                }
+            }
+            finally
+            {
+                if (shot != null) shot.Dispose();
+                if (white != null) white.Dispose();
+                if (frame != null) frame.Dispose();
+            }
+            // Stop on time or frame count; the cap already follows the pixel
+            // budget, so an unattended take cannot exhaust the process.
+            if (_gifClock.ElapsedMilliseconds >= _gifMaxMs || _gifFrames.Count >= _gifMaxFrames) StopGif();
+        }
+
+        // WebP keeps the supersampled pixels (lossless); GIF carries a 256-colour
+        // table and pays for the pixels twice, so it is shrunk. The frame cap
+        // follows the pixel count, so a long take cannot eat gigabytes.
+        void ResolveGifSize(int sw, int sh)
+        {
+            sw = Math.Max(1, sw);
+            sh = Math.Max(1, sh);
+            if (_gifFormat == "gif" || _gifFormat == "webp")
+            {
+                // A working size well above the final 400x300 box: the crop is
+                // taken here, and the fit down to the box happens afterwards, so
+                // the pixels spent on the character are not wasted. WebP is
+                // lossless, so it keeps every pixel it is given - which is the whole
+                // point of recording it - and the ceiling only exists to stop a very
+                // large window from forcing a multi-hundred-megabyte memory and
+                // encode bill. 1920 covers a maximised window on a 1080p screen
+                // without shrinking it; the frame budget below still guards memory.
+                double cap = _gifFormat == "webp" ? 1920.0 : 1200.0;
+                double s = Math.Min(1.0, cap / Math.Max(sw, sh));
+                _gifCaptureW = Math.Max(2, (int)Math.Round(sw * s));
+                _gifCaptureH = Math.Max(2, (int)Math.Round(sh * s));
+            }
+            else
+            {
+                _gifCaptureW = sw;
+                _gifCaptureH = sh;
+            }
+            long bytes = (long)_gifCaptureW * _gifCaptureH * 4;
+            _gifMaxFrames = (int)Math.Max(24, Math.Min(300, (500L * 1024 * 1024) / Math.Max(1, bytes)));
+        }
+
+        // Animated WebP: full colour (alpha included) with real per-frame delays,
+        // lossless, so nothing is thrown away before it reaches the chat client.
+        void WriteWebp(string path, List<Bitmap> frames, List<int> delays, bool alpha)
+        {
+            // Every distinct frame becomes one lossless still, and the container
+            // is written by WebpWriter with full-canvas frames. libwebp's own
+            // animation encoder stores later frames as blended sub-rectangles,
+            // and Discord's media decoder shows nothing at all for that layout.
+            var stills = EncodeWebpStills(frames, alpha);
+            using (var fs = File.Create(path))
+                WebpWriter.Write(fs, stills, delays, frames[0].Width, frames[0].Height);
+        }
+
+        // Pipes the frames to ffmpeg and returns one standalone lossless WebP per
+        // frame, in order. They go to a temp folder rather than a pipe so a
+        // half-written frame can never be taken for a complete one.
+        List<byte[]> EncodeWebpStills(List<Bitmap> frames, bool alpha)
+        {
+            string exe = FindFfmpeg();
+            if (exe == null) throw new InvalidOperationException("ffmpeg.exe is missing next to the app");
+            int w = frames[0].Width, h = frames[0].Height;
+            string dir = Path.Combine(Path.GetTempPath(), "manikin-frames-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(exe,
+                    "-y -f rawvideo -pix_fmt bgra -video_size " + w + "x" + h +
+                    " -framerate 30 -i - -an -loglevel error" +
+                    // Maximum quality: lossless VP8L at the encoder's highest effort
+                    // (6 is the ceiling; it costs encode time, not pixels). The pixel
+                    // format is always stated - RGB for an opaque take, RGBA where
+                    // alpha matters - so the frames can never be routed through a
+                    // 4:2:0 conversion, which would drop chroma even though the
+                    // codec itself is lossless.
+                    " -c:v libwebp -lossless 1 -compression_level 6" +
+                    " -pix_fmt " + (alpha ? "bgra" : "rgb24") +
+                    " -f image2 \"" + Path.Combine(dir, "f%05d.webp") + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardInput = true;
+                psi.RedirectStandardError = true;
+
+                var diag = new System.Text.StringBuilder();
+                using (var proc = System.Diagnostics.Process.Start(psi))
+                {
+                    proc.ErrorDataReceived += (s, e) =>
+                    {
+                        if (e.Data != null && diag.Length < 2000) diag.AppendLine(e.Data);
+                    };
+                    proc.BeginErrorReadLine();
+                    using (var input = proc.StandardInput.BaseStream)
+                    {
+                        var row = new byte[w * 4];
+                        foreach (var bmp in frames)
+                        {
+                            var bd = bmp.LockBits(new Rectangle(0, 0, w, h),
+                                System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                            try
+                            {
+                                for (int y = 0; y < h; y++)
+                                {
+                                    Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), row, 0, w * 4);
+                                    input.Write(row, 0, row.Length);
+                                }
+                            }
+                            finally { bmp.UnlockBits(bd); }
+                        }
+                    }
+                    if (!proc.WaitForExit(300000))
+                    {
+                        try { proc.Kill(); } catch { }
+                        throw new InvalidOperationException("ffmpeg timed out encoding the frames");
+                    }
+                    if (proc.ExitCode != 0)
+                        throw new InvalidOperationException("ffmpeg could not encode the frames (exit " + proc.ExitCode +
+                            "): " + diag.ToString().Trim());
+                }
+                var files = Directory.GetFiles(dir, "f*.webp");
+                Array.Sort(files, StringComparer.Ordinal);
+                if (files.Length != frames.Count)
+                    throw new InvalidOperationException("ffmpeg encoded " + files.Length + " of " + frames.Count + " frames");
+                var stills = new List<byte[]>(files.Length);
+                foreach (var f in files)
+                {
+                    var bytes = File.ReadAllBytes(f);
+                    if (bytes.Length < 64) throw new InvalidOperationException("a WebP frame came back empty");
+                    stills.Add(bytes);
+                }
+                return stills;
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
+        static string FindFfmpeg()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "tools") })
+            {
+                try
+                {
+                    string p = Path.Combine(dir, "ffmpeg.exe");
+                    if (File.Exists(p)) return p;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        // Crops the recorded frames to where the animation actually moves. The
+        // stage is mostly empty space, and a chat client that re-encodes a 1200 px
+        // frame turns a character occupying a tenth of it into a smudge; cropping
+        // keeps that character at full pixel density.
+        // Scales the cropped clip into the box Discord shows GIFs in, with the
+        // bicubic filter its proxy does not use.
+        List<Bitmap> FitGifBox(List<Bitmap> frames)
+        {
+            int w = frames[0].Width, h = frames[0].Height;
+            double s = Math.Min(1.0, Math.Min(400.0 / w, 300.0 / h));
+            if (s >= 0.999) return frames;
+            int nw = Math.Max(2, (int)Math.Round(w * s));
+            int nh = Math.Max(2, (int)Math.Round(h * s));
+            var scaled = new List<Bitmap>(frames.Count);
+            foreach (var b in frames)
+            {
+                scaled.Add(ScaleTo(b, nw, nh));
+                b.Dispose();
+            }
+            return scaled;
+        }
+
+        List<Bitmap> CropToMotion(List<Bitmap> frames)
+        {
+            int w = frames[0].Width, h = frames[0].Height;
+            int minX = w, minY = h, maxX = -1, maxY = -1;
+            int[] first = FramePixels(frames[0]);
+            for (int f = 1; f < frames.Count; f++)
+            {
+                int[] px = FramePixels(frames[f]);
+                for (int y = 0; y < h; y++)
+                {
+                    int row = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int p = first[row + x], q = px[row + x];
+                        if (p == q) continue;
+                        int dr = Math.Abs(((p >> 16) & 0xFF) - ((q >> 16) & 0xFF));
+                        int dg = Math.Abs(((p >> 8) & 0xFF) - ((q >> 8) & 0xFF));
+                        int db = Math.Abs((p & 0xFF) - (q & 0xFF));
+                        if (dr + dg + db < 24) continue;   // ignore re-encode noise
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            if (maxX < minX || maxY < minY) return frames;   // nothing moved: keep the stage
+
+            int bw = maxX - minX + 1, bh = maxY - minY + 1;
+            int pad = Math.Max(12, (int)(Math.Max(bw, bh) * 0.30));
+            int x0 = Math.Max(0, minX - pad), y0 = Math.Max(0, minY - pad);
+            int x1 = Math.Min(w - 1, maxX + pad), y1 = Math.Min(h - 1, maxY + pad);
+            var box = new Rectangle(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+            // If the whole scene is moving (weather, parallax) there is nothing to
+            // gain, and the full frame is the honest clip.
+            if ((long)box.Width * box.Height > (long)w * h * 85 / 100) return frames;
+
+            var cropped = new List<Bitmap>(frames.Count);
+            foreach (var b in frames)
+            {
+                cropped.Add(b.Clone(box, System.Drawing.Imaging.PixelFormat.Format32bppArgb));
+                b.Dispose();
+            }
+            return cropped;
+        }
+
+        static int[] FramePixels(Bitmap b)
+        {
+            int w = b.Width, h = b.Height;
+            var px = new int[w * h];
+            System.Drawing.Imaging.BitmapData bd = null;
+            try
+            {
+                bd = b.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                for (int y = 0; y < h; y++)
+                    Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), px, y * w, w);
+            }
+            catch { }
+            finally { if (bd != null) { try { b.UnlockBits(bd); } catch { } } }
+            return px;
+        }
+
+        static Bitmap ScaleTo(Bitmap src, int w, int h)
+        {
+            var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                g.DrawImage(src, 0, 0, w, h);
+            }
+            return bmp;
+        }
+
+        public string StopGif()
+        {
+            if (!_gifRunning) return GifPoll();
+            _gifRunning = false;
+            try { if (_gifTimer != null) { _gifTimer.Stop(); _gifTimer.Dispose(); } } catch { }
+            _gifTimer = null;
+            Dbg("take stop: frames=" + (_gifFrames == null ? 0 : _gifFrames.Count) +
+                " ms=" + (_gifClock == null ? 0 : _gifClock.ElapsedMilliseconds));
+            // A cut-out take ran against a black backdrop; the chosen scene goes
+            // back before anything else is drawn.
+            if (_gifCut) { try { _flash.LoadBackground(_bgName); } catch { } }
+            // The cover comes off before anything else: the frames are already snapped,
+            // so only the encode has to wait. This used to run after the "nothing
+            // moved" return, which could leave the cover up for good.
+            try { _flash.Shield(null); } catch { }
+            // A still pose still produces a file in the chosen format, so the
+            // clipboard can never keep the previous take's file.
+            if (_gifFrames == null || _gifFrames.Count == 0)
+            {
+                lock (_gifLock) { _gifFinished = true; _gifOk = false; _gifError = "nothing moved while recording"; }
+                return GifPoll();
+            }
+            // Hand the take to a worker. Cropping and ffmpeg used to run here, on
+            // the UI thread, which froze the whole window for the length of the
+            // encode. The frames move out of the recording fields first, so a new
+            // take cannot dispose them while they are being encoded.
+            var frames = _gifFrames;
+            var times = _gifTimes;
+            int take = _gifTake;
+            string fmt = _gifFormat;
+            bool cut = _gifCut;
+            _gifFrames = null;
+            _gifTimes = null;
+            lock (_gifLock) { _gifEncoding = true; _gifFinished = false; }
+            // A thread of its own, not Task.Run: the encode blocks on ffmpeg for
+            // seconds, and the pool is busy with the catalog sync, so a take could
+            // sit in the queue with the panel stuck on "Encoding..." (and the
+            // clipboard still holding the previous clip) until the pool freed up.
+            new System.Threading.Thread(() =>
+            {
+                // An exception on this thread is fatal to the whole app (Task.Run
+                // swallowed it), so a failed encode has to be reported instead.
+                try { EncodeTake(take, fmt, frames, times, cut); }
+                catch (Exception ex)
+                {
+                    Dbg("encode thread EX: " + ex.GetType().Name + ": " + ex.Message);
+                    lock (_gifLock)
+                    {
+                        _gifEncoding = false;
+                        if (take == _gifTake)
+                        {
+                            _gifFinished = true; _gifOk = false;
+                            _gifError = "encoding failed: " + ex.Message;
+                        }
+                    }
+                    foreach (var f in frames) { try { f.Dispose(); } catch { } }
+                }
+            })
+            { IsBackground = true, Name = "manikin-encode" }.Start();
+            return GifPoll();
+        }
+
+        // Runs on a worker thread: no control is touched here, and the only state
+        // shared with the UI thread is published at the end under _gifLock.
+        void EncodeTake(int take, string fmt, List<Bitmap> frames, List<int> times, bool cut)
+        {
+            string path = "", error = null;
+            int n = frames.Count, outN = n, msOut = 0;
+            long bytes = 0;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // Count first: a disposed bitmap throws on .Width, so the log has to be
+            // able to say "the frames arrived dead" before it reads one.
+            Dbg("encode start: " + fmt + " cut=" + cut + " n=" + n);
+            int w = frames[0].Width, h = frames[0].Height;
+            lock (_encodeLock)
+            {
+                try
+                {
+                    // Both formats are cut to the character, not the stage: the
+                    // stage is mostly empty, and a chat client that scales the whole
+                    // frame down turns the figure into a smudge. A cut-out take
+                    // already isolates the character, so it only needs one box for
+                    // the whole clip; otherwise CropToMotion keeps a wide margin
+                    // around everything that moves.
+                    if (cut) frames = Matte.TrimAll(frames);
+                    else frames = CropToMotion(frames);
+                    // Discord's media proxy resamples any GIF bigger than its 400x300
+                    // display box, and its filter is what turns a clean clip into a
+                    // smudge. Doing that resize here, before the palette is chosen,
+                    // means the file that leaves is the file that gets shown.
+                    if (fmt == "gif") frames = FitGifBox(frames);
+                    n = frames.Count;
+                    // Split out so a slow take can be told apart: cropping is ours,
+                    // the rest is ffmpeg (see the take encode line below).
+                    int cropMs = (int)clock.ElapsedMilliseconds;
+                    Dbg("take crop: " + fmt + " cut=" + cut + " " + frames[0].Width + "x" +
+                        frames[0].Height + " frames=" + n + " in " + cropMs + "ms");
+
+                    var delays = new List<int>(n);
+                    for (int i = 0; i < n; i++)
+                    {
+                        int step = i + 1 < n ? times[i + 1] - times[i]
+                            : (n > 1 ? times[n - 1] - times[n - 2] : 40);
+                        delays.Add(Math.Max(20, Math.Min(3000, step)));
+                    }
+                    string ext = fmt == "gif" ? ".gif" : ".webp";
+                    path = Path.Combine(Path.GetTempPath(),
+                        "manikin-" + fmt + "-" + DateTime.Now.ToString("HHmmss") + "-" + n + "f" + ext);
+                    if (fmt == "webp")
+                    {
+                        // Lossless colour that Discord actually animates.
+                        WriteWebp(path, frames, delays, cut);
+                    }
+                    else
+                    {
+                        // GIF is the palette one, which is what most chat clients
+                        // reliably animate.
+                        using (var fs = File.Create(path))
+                            GifWriter.Write(fs, frames, delays, cut);
+                    }
+                    bytes = new FileInfo(path).Length;
+                    Dbg("take encode: " + fmt + " cut=" + cut + " frames=" + n +
+                        " " + frames[0].Width + "x" + frames[0].Height +
+                        " bytes=" + bytes + " crop=" + cropMs + "ms" +
+                        " encode=" + (clock.ElapsedMilliseconds - cropMs) + "ms");
+                    outN = n;
+                    msOut = times[n - 1] + delays[n - 1];
+                    w = frames[0].Width;
+                    h = frames[0].Height;
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    Dbg("Gif EX: " + ex.Message);
+                }
+                finally
+                {
+                    foreach (var f in frames) { try { f.Dispose(); } catch { } }
+                }
+            }
+            lock (_gifLock)
+            {
+                _gifEncoding = false;
+                // A newer take owns the panel now; its result is the one to show.
+                if (take == _gifTake)
+                {
+                    _gifFinished = true;
+                    _gifOk = error == null;
+                    if (error == null)
+                    {
+                        _gifFile = path; _gifBytes = (int)bytes; _gifOut = outN;
+                        _gifMsOut = msOut; _gifW = w; _gifH = h;
+                    }
+                    else _gifError = error;
+                }
+            }
+            if (error == null) CopyClip(path);
+        }
+
+        // The clipboard is OLE and belongs to the UI thread (the receiving app
+        // reads it there), so the finished file is handed back with BeginInvoke
+        // instead of being set from the encoder's thread.
+        void CopyClip(string path)
+        {
+            Action put = () =>
+            {
+                try
+                {
+                    // The file is what chat clients upload. A Bitmap or PNG next to
+                    // it would let a client paste a still instead of the animation,
+                    // so the file drop is the only thing on the clipboard.
+                    var data = new DataObject();
+                    data.SetData(DataFormats.FileDrop, new[] { path });
+                    Clipboard.SetDataObject(data, true);
+                }
+                catch (Exception ex) { Dbg("Clip EX: " + ex.Message); }
+            };
+            try
+            {
+                if (IsHandleCreated && InvokeRequired) BeginInvoke(put);
+                else put();
+            }
+            catch { }
+        }
+
+        public string GifPoll()
+        {
+            var o = new JObject();
+            lock (_gifLock)
+            {
+                o["take"] = _gifTake;
+                o["recording"] = _gifRunning;
+                o["encoding"] = _gifEncoding;
+                o["frames"] = _gifFrames == null ? 0 : _gifFrames.Count;
+                o["ms"] = _gifRunning && _gifClock != null ? (int)_gifClock.ElapsedMilliseconds : _gifMsOut;
+                o["done"] = _gifFinished;
+                if (_gifFinished)
+                {
+                    o["ok"] = _gifOk;
+                    if (_gifOk)
+                    {
+                        o["frames"] = _gifOut;
+                        o["ms"] = _gifMsOut;
+                        o["bytes"] = _gifBytes;
+                        o["w"] = _gifW;
+                        o["h"] = _gifH;
+                        o["file"] = _gifFile;
+                        o["fmt"] = _gifFormat;
+                    }
+                    else o["error"] = _gifError;
+                }
+            }
+            return o.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        void DropGifFrames()
+        {
+            if (_gifFrames == null) return;
+            foreach (var f in _gifFrames) { try { f.Dispose(); } catch { } }
+            _gifFrames.Clear();
+        }
+
+        // Change detector over every pixel, so a one-pixel glow flicker is a
+        // frame of its own rather than being silently merged away.
+        static int FrameHash(Bitmap b)
+        {
+            int w = b.Width, h = b.Height;
+            System.Drawing.Imaging.BitmapData bd = null;
+            try
+            {
+                bd = b.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var row = new int[w];
+                int hash = 17;
+                for (int y = 0; y < h; y++)
+                {
+                    Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), row, 0, w);
+                    for (int x = 0; x < w; x++) hash = hash * 31 + row[x];
+                }
+                return hash;
+            }
+            catch { return 0; }
+            finally { if (bd != null) { try { b.UnlockBits(bd); } catch { } } }
+        }
+
         public string DoFlashQuery(string method) { if (_flash == null) return ""; return _flash.QueryFlash(method); }
-        public void DoBackground(string name) { if (_flash != null) _flash.LoadBackground(name); }
+        public void DoBackground(string name)
+        {
+            _bgName = name ?? "";
+            if (_flash != null) _flash.LoadBackground(_bgName);
+        }
+        // Remembered so a cut-out capture can put the user's scene back after it
+        // has swapped the background for black and then white.
+        string _bgName = "";
         // Cache of the last overlay rects the page reported (in Form-client
         // coordinates, same space PositionFlash receives). Re-applied every time
         // PositionFlash runs so the punched hole always tracks _flash's true

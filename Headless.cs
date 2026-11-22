@@ -260,6 +260,10 @@ namespace ManikinApp
                 T("ui_names_follow_outfit", true, UiNamesFollowOutfit),
                 T("name_tag_over_avatar", true, NameTagOverAvatar),
                 T("ui_copy_log_button", false, UiCopyLog),
+                T("ui_snap_image", false, UiSnapImage),
+                T("ui_snap_cutout", false, UiSnapCutout),
+                T("ui_gif_record", false, UiGifRecord),
+                T("ui_gif_cutout", false, UiGifCutout),
                 T("ui_gear_icons_sync_checkboxes", true, UiGearIconSync),
                 T("loader_line_avoids_gear_list", false, LoaderPlacement),
                 T("downloads_cache_keeps_gender_paths", false, DownloadsCachePaths),
@@ -1554,6 +1558,331 @@ namespace ManikinApp
             string text = "";
             await WaitUntil(() => { text = Clipboard.ContainsText() ? Clipboard.GetText() : ""; return text.Contains(marker); }, 3000, 100);
             Expect(text.Contains(marker), "clipboard does not hold the debug log (" + text.Length + " chars)");
+        }
+
+        // Capture tab, still: the rendered preview goes to the clipboard as an
+        // image, without grabbing the screen.
+        async Task UiSnapImage()
+        {
+            await Js("window.__noUiLock = true");
+            await JsAwait("openTab('capture')");
+            Clipboard.Clear();
+            await Js("document.getElementById('capShot').click()");
+            bool got = false;
+            await WaitUntil(() => { try { got = Clipboard.ContainsImage(); } catch { got = false; } return got; }, 5000, 100);
+            Expect(got, "copy image did not put a picture on the clipboard");
+            using (var img = Clipboard.GetImage())
+                Expect(img != null && img.Width > 1600 && img.Height > 900,
+                    "clipboard image is " + (img == null ? "null" : img.Width + "x" + img.Height));
+            Expect(JsonConvert.DeserializeObject<bool>(await Js("document.getElementById('capStatus').textContent.toLowerCase().indexOf('copied') >= 0")),
+                "capture panel did not confirm the copy");
+        }
+
+        // Capture tab: "No background" copies the avatar alone. The alpha cannot
+        // come from Flash, so it is recovered from two renders of the same frame
+        // (black behind, then white behind). The chosen scene has to be back
+        // afterwards, and the PNG has to be trimmed to the character.
+        async Task UiSnapCutout()
+        {
+            await Js("window.__noUiLock = true");
+            await Js("project.bgScene='Hill';sendBackground();");
+            await Task.Delay(600);
+            await JsAwait("openTab('capture')");
+            bool on = JsonConvert.DeserializeObject<bool>(await Js(
+                "(() => { const c = document.getElementById('capCut'); if (!c.classList.contains('on')) c.click(); return c.classList.contains('on'); })()"));
+            Expect(on, "the cut-out toggle did not turn on");
+
+            System.Drawing.Color before;
+            using (var b = Flash.Snapshot()) before = b.GetPixel(3, 3);
+            Clipboard.Clear();
+            await Js("document.getElementById('capShot').click()");
+
+            System.Windows.Forms.IDataObject data = null;
+            await WaitUntil(() =>
+            {
+                try { data = Clipboard.GetDataObject(); return data != null && data.GetDataPresent("PNG"); }
+                catch { return false; }
+            }, 12000, 100);
+            Expect(data != null && data.GetDataPresent("PNG"),
+                "cut-out copy left no PNG on the clipboard (got " +
+                (data == null ? "null" : string.Join(",", data.GetFormats())) + "; panel says '" +
+                JsonConvert.DeserializeObject<string>(await Js("document.getElementById('capStatus').textContent")) + "')");
+            using (var png = data == null ? null : data.GetData("PNG") as System.IO.MemoryStream)
+            using (var bmp = png == null ? null : new Bitmap(png))
+            {
+                Expect(bmp != null, "the cut-out PNG payload would not decode");
+                if (bmp != null)
+                {
+                    Expect(bmp.PixelFormat == System.Drawing.Imaging.PixelFormat.Format32bppArgb,
+                        "cut-out PNG is " + bmp.PixelFormat + ", so it carries no alpha channel");
+                    int opaque = 0, clear = 0;
+                    for (int y = 0; y < bmp.Height; y += 3)
+                        for (int x = 0; x < bmp.Width; x += 3)
+                        {
+                            int a = bmp.GetPixel(x, y).A;
+                            if (a > 250) opaque++;
+                            else if (a < 8) clear++;
+                        }
+                    Expect(bmp.GetPixel(0, 0).A == 0,
+                        "cut-out corner is not transparent (alpha " + bmp.GetPixel(0, 0).A + ")");
+                    Expect(opaque > 20, "cut-out has almost no opaque character pixels (" + opaque + ")");
+                    Expect(clear > opaque, "cut-out is mostly solid (" + clear + " clear vs " + opaque +
+                        " opaque), so the scene was not removed");
+                    Expect(bmp.Width < 1200, "cut-out was not trimmed to the character (" + bmp.Width + "x" + bmp.Height + ")");
+                    bmp.Save(Path.Combine(_snapDir, "cutout.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+            }
+
+            System.Drawing.Color after;
+            using (var b = Flash.Snapshot()) after = b.GetPixel(3, 3);
+            Expect(before.ToArgb() == after.ToArgb(),
+                "the scene was not put back after the cut-out (corner " + before + " -> " + after + ")");
+            await Js("project.bgScene='';sendBackground();");
+            // The toggle belongs to the panel, not to one test: leave it off so a
+            // later take records the scene like the Capture tab normally does.
+            await Js("(() => { const c = document.getElementById('capCut'); if (c.classList.contains('on')) c.click(); })()");
+        }
+
+        // Capture tab: with "No background" on, a clip has to keep the character's
+        // alpha as well: WebP via its VP8X alpha flag, GIF via a transparent index,
+        // and both trimmed to the character like the still cut-out.
+        async Task UiGifCutout()
+        {
+            await Js("window.__noUiLock = true");
+            await SetGender("F");
+            Call("loadEmote", "Dance");
+            await Task.Delay(400);
+            await JsAwait("openTab('capture')");
+            bool on = JsonConvert.DeserializeObject<bool>(await Js(
+                "(() => { const c = document.getElementById('capCut'); if (!c.classList.contains('on')) c.click(); return c.classList.contains('on'); })()"));
+            Expect(on, "the cut-out toggle did not turn on for clips");
+
+            // WebP first: lossless, so the alpha channel has to survive the encode.
+            await Js("document.querySelectorAll('#capFmt .preset-chip')[1].click()");
+            var started = DateTime.Now;
+            Clipboard.Clear();
+            await Js("document.getElementById('capGif').click()");
+            await Task.Delay(250);
+            Expect(Flash.Shielding, "a take should hide the enlarged player behind a frozen frame");
+            await Task.Delay(650);
+            await Js("document.getElementById('capGif').click()");
+            string webp = await WaitForCapture(".webp", started);
+            Expect(!Flash.Shielding, "the frozen frame should go once the take ends");
+            Expect(!string.IsNullOrEmpty(webp), "cut-out WebP take produced no file (status: " +
+                JsonConvert.DeserializeObject<string>(await Js("document.getElementById('capStatus').textContent")) + ")");
+            if (!string.IsNullOrEmpty(webp))
+            {
+                byte[] wb = File.ReadAllBytes(webp);
+                Expect(wb.Length > 30 && wb[12] == (byte)'V' && wb[13] == (byte)'P' && wb[14] == (byte)'8' && wb[15] == (byte)'X',
+                    "cut-out WebP has no VP8X header");
+                Expect((wb[20] & 0x10) != 0,
+                    "cut-out WebP does not declare alpha (flags 0x" + wb[20].ToString("X2") + ")");
+                int cw = wb[24] | (wb[25] << 8) | (wb[26] << 16);
+                Expect(cw + 1 < 1200, "cut-out WebP was not trimmed to the character (canvas width " + (cw + 1) + ")");
+            }
+
+            // Then GIF: single transparent index, still inside the 400x300 box.
+            await Js("document.querySelectorAll('#capFmt .preset-chip')[0].click()");
+            started = DateTime.Now;
+            Clipboard.Clear();
+            await Js("document.getElementById('capGif').click()");
+            await Task.Delay(900);
+            await Js("document.getElementById('capGif').click()");
+            string gif = await WaitForCapture(".gif", started);
+            Expect(!string.IsNullOrEmpty(gif), "cut-out GIF take produced no file");
+            if (!string.IsNullOrEmpty(gif))
+            {
+                byte[] gb = File.ReadAllBytes(gif);
+                bool transparent = false;
+                for (int i = 0; i + 8 < gb.Length; i++)
+                    if (gb[i] == 0x21 && gb[i + 1] == 0xF9 && gb[i + 2] == 0x04)
+                    {
+                        transparent = (gb[i + 3] & 0x01) != 0;
+                        break;
+                    }
+                Expect(transparent, "cut-out GIF carries no transparent colour (graphic control extension has no transparency flag)");
+                using (var gi = new Bitmap(gif))
+                    Expect(gi.Width <= 400 && gi.Height <= 300,
+                        "cut-out GIF is " + gi.Width + "x" + gi.Height + ", outside the 400x300 box");
+            }
+
+            await Js("(() => { const c = document.getElementById('capCut'); if (c.classList.contains('on')) c.click(); })()");
+            await Js("document.querySelectorAll('#capFmt .preset-chip')[0].click()");
+        }
+
+        // Capture tab: record while an emote plays, stop, and the clipboard
+        // should hold an animated PNG that keeps every colour of the scene
+        // (that is the whole point over GIF: no palette, no dither).
+        async Task UiGifRecord()
+        {
+            await Js("window.__noUiLock = true");
+            // Give the rig something to animate before recording.
+            await SetGender("F");
+            await Load("Hair", HairBackF);
+            await Load("Helm", HelmPlain);
+            Call("loadEmote", "Dance");
+            await Task.Delay(400);
+            await JsAwait("openTab('capture')");
+            // GIF must be what an untouched panel records, because it is the only
+            // format Discord animates.
+            Expect(JsonConvert.DeserializeObject<string>(await Js("document.querySelector('#capFmt .preset-chip.on').dataset.fmt")) == "gif",
+                "GIF is not the default format, so recording without picking a chip is not Discord-safe");
+            // GIF first, while the emote is fresh: it is what Discord plays, and
+            // it must stay valid.
+            await Js("document.querySelectorAll('#capFmt .preset-chip')[0].click()");
+            var gifStarted = DateTime.Now;
+            Clipboard.Clear();
+            await Js("document.getElementById('capGif').click()");
+            await Task.Delay(250);
+            // A take records the preview at its own size and leaves the scene alone,
+            // so the preview has to stay live while recording: nothing may cover it.
+            Expect(!Flash.Shielding, "a normal take should not cover the preview");
+            await Task.Delay(650);
+            await Js("document.getElementById('capGif').click()");
+            string gif = await WaitForCapture(".gif", gifStarted);
+            Expect(!string.IsNullOrEmpty(gif), "GIF mode did not produce a GIF (status: " +
+                JsonConvert.DeserializeObject<string>(await Js("document.getElementById('capStatus').textContent")) + ")");
+            if (!string.IsNullOrEmpty(gif))
+            {
+                Expect(Path.GetFileName(gif).Contains("-gif-"),
+                    "the GIF take was written as " + Path.GetFileName(gif) + " (the host did not apply the selected format)");
+                byte[] gb = File.ReadAllBytes(gif);
+                Expect(gb.Length > 8 && gb[0] == (byte)'G' && gb[1] == (byte)'I' && gb[2] == (byte)'F',
+                    "the .gif capture is not GIF data (starts " + BitConverter.ToString(gb, 0, Math.Min(4, gb.Length)) + ")");
+                // The page writes the row a poll tick after the clipboard lands, so
+                // wait for it instead of reading whatever the previous line said.
+                string gifText = "";
+                for (int i = 0; i < 50 && !(gifText.StartsWith("GIF") || gifText.IndexOf("failed") >= 0); i++)
+                {
+                    gifText = JsonConvert.DeserializeObject<string>(await Js("document.getElementById('capStatus').textContent"));
+                    if (!gifText.StartsWith("GIF") && gifText.IndexOf("failed") < 0) await Task.Delay(100);
+                }
+                Expect(gifText.StartsWith("GIF"), "GIF mode reported the wrong format: " + gifText);
+                // The clipboard must carry the .gif and nothing that a client would
+                // rather paste as a still: Discord animates a GIF file, but shows an
+                // APNG (and any Bitmap/PNG payload) as a static image.
+                var fmts = Clipboard.GetDataObject().GetFormats();
+                Expect(fmts.Any(f => f == DataFormats.FileDrop), "GIF clipboard has no file drop); got " + string.Join(",", fmts));
+                Expect(!fmts.Any(f => f == DataFormats.Bitmap || f == "PNG"),
+                    "GIF clipboard also carries a still image (" + string.Join(",", fmts) + "), which is what gets pasted");
+                using (var gi = new Bitmap(gif))
+                {
+                    int gf = gi.GetFrameCount(System.Drawing.Imaging.FrameDimension.Time);
+                    Expect(gf >= 2, "GIF has " + gf + " frame(s)");
+                    // Recorded from the 1.5x render, then filtered by us into the
+                    // box Discord displays a GIF in, so its proxy never resamples.
+                    Expect(gi.Width <= 400 && gi.Height <= 300,
+                        "GIF is " + gi.Width + "x" + gi.Height + ", above Discord's no-resize box");
+                    // Every colour has to survive Discord's five-bit crush: a table
+                    // off that grid is rounded on upload, and the dither that was
+                    // hiding the bands turns into noise.
+                    var seen = new HashSet<int>();
+                    for (int y = 0; y < gi.Height; y += 3)
+                        for (int x = 0; x < gi.Width; x += 3)
+                        {
+                            var c = gi.GetPixel(x, y);
+                            seen.Add((c.R << 16) | (c.G << 8) | c.B);
+                        }
+                    int offGrid = 0;
+                    foreach (int c in seen)
+                        if (((c >> 16) & 7) != 4 || ((c >> 8) & 7) != 4 || (c & 7) != 4) offGrid++;
+                    Expect(offGrid == 0, offGrid + " of " + seen.Count +
+                        " colours are off Discord's five-bit grid, so they get rounded on upload");
+                }
+            }
+            // WebP: lossless full colour, and the chat clients keep the animation
+            // instead of showing the first frame.
+            await Js("document.querySelectorAll('#capFmt .preset-chip')[1].click()");
+            Call("loadEmote", "Dance");
+            await Task.Delay(300);
+            var webpStarted = DateTime.Now;
+            Clipboard.Clear();
+            await Js("document.getElementById('capGif').click()");
+            await Task.Delay(1600);
+            await Js("document.getElementById('capGif').click()");
+            string webp = await WaitForCapture(".webp", webpStarted);
+            Expect(!string.IsNullOrEmpty(webp), "WebP mode produced no .webp (status: " +
+                JsonConvert.DeserializeObject<string>(await Js("document.getElementById('capStatus').textContent")) + ")");
+            if (!string.IsNullOrEmpty(webp))
+            {
+                byte[] wb = File.ReadAllBytes(webp);
+                Expect(wb.Length > 20000, "WebP is only " + wb.Length + " bytes");
+                Expect(System.Text.Encoding.ASCII.GetString(wb, 0, 4) == "RIFF" &&
+                    System.Text.Encoding.ASCII.GetString(wb, 8, 4) == "WEBP", "the .webp capture is not RIFF/WEBP");
+                // The ANIM chunk is what makes it a clip rather than one picture:
+                // exactly the part Discord keeps for WebP and drops for APNG.
+                Expect(System.Text.Encoding.ASCII.GetString(wb).Contains("ANIM"),
+                    "WebP has no ANIM chunk, so it would arrive as a still");
+                Expect(Path.GetFileName(webp).Contains("-webp-"), "WebP file was not tagged as webp");
+                // VP8X carries the animated canvas size. The lossless clip is the
+                // supersampled render cropped tight, so it must not have been put
+                // through the 400x300 fit the GIF uses: that downscale is the one
+                // thing the format was picked to avoid.
+                int vp8x = -1;
+                for (int i = 12; i + 16 <= wb.Length && vp8x < 0; i++)
+                    if (wb[i] == (byte)'V' && wb[i + 1] == (byte)'P' && wb[i + 2] == (byte)'8' && wb[i + 3] == (byte)'X')
+                        vp8x = i + 8;
+                Expect(vp8x > 0, "WebP has no VP8X header");
+                if (vp8x > 0)
+                {
+                    int vw = (wb[vp8x + 4] | (wb[vp8x + 5] << 8) | (wb[vp8x + 6] << 16)) + 1;
+                    int vh = (wb[vp8x + 7] | (wb[vp8x + 8] << 8) | (wb[vp8x + 9] << 16)) + 1;
+                    Expect(Math.Max(vw, vh) > 400, "WebP canvas is only " + vw + "x" + vh + " - it was shrunk to the GIF box");
+                    Log("webp canvas " + vw + "x" + vh + ", " + (wb.Length / 1024) + " KB");
+                    // Every frame has to cover the canvas. libwebp's own animation
+                    // encoder writes later frames as blended sub-rectangles, and
+                    // Discord's decoder fails to load a file laid out that way.
+                    int frames = 0, partial = 0;
+                    for (int p = 12; p + 8 <= wb.Length; )
+                    {
+                        int sz = BitConverter.ToInt32(wb, p + 4);
+                        if (sz < 0 || p + 8 + sz > wb.Length) break;
+                        if (wb[p] == (byte)'A' && wb[p + 1] == (byte)'N' && wb[p + 2] == (byte)'M' && wb[p + 3] == (byte)'F')
+                        {
+                            int fx = (wb[p + 8] | (wb[p + 9] << 8) | (wb[p + 10] << 16)) * 2;
+                            int fy = (wb[p + 11] | (wb[p + 12] << 8) | (wb[p + 13] << 16)) * 2;
+                            int fw = (wb[p + 14] | (wb[p + 15] << 8) | (wb[p + 16] << 16)) + 1;
+                            int fh = (wb[p + 17] | (wb[p + 18] << 8) | (wb[p + 19] << 16)) + 1;
+                            frames++;
+                            if (fx != 0 || fy != 0 || fw != vw || fh != vh) partial++;
+                        }
+                        p += 8 + sz + (sz & 1);
+                    }
+                    Expect(frames > 1, "WebP has " + frames + " ANMF frames");
+                    Expect(partial == 0, partial + " of " + frames +
+                        " WebP frames are sub-rectangles, which Discord fails to load");
+                }
+            }
+
+        }
+
+        // Waits for the recorded clip to land on the clipboard as a file.
+        // Only accepts a file written by this recording, so a leftover capture in
+        // %TEMP% cannot make a format switch look like it worked.
+        async Task<string> WaitForCapture(string ext, DateTime after)
+        {
+            string found = "";
+            await WaitUntil(() =>
+            {
+                try
+                {
+                    var d = Clipboard.GetDataObject();
+                    if (d != null && d.GetDataPresent(DataFormats.FileDrop))
+                    {
+                        var files = d.GetData(DataFormats.FileDrop) as string[];
+                        if (files != null && files.Length > 0 &&
+                            files[0].EndsWith(ext, StringComparison.OrdinalIgnoreCase) && File.Exists(files[0]) &&
+                            File.GetLastWriteTime(files[0]) >= after.AddSeconds(-1))
+                        {
+                            found = files[0];
+                            return true;
+                        }
+                    }
+                }
+                catch { }
+                return false;
+            }, 25000, 200);
+            return found;
         }
 
         // Gear-list icon clicks and the Misc checkboxes are one state.

@@ -32,3 +32,6 @@ catalog/wardrobe.json
 # Optional local override for the catalog credentials - the key itself is
 # compiled into Wardrobe.cs, so no file is needed (see README).
 supabase.key
+
+# ffmpeg is fetched locally - too large for the repo (GitHub rejects >100 MB)
+tools/ffmpeg.exe
