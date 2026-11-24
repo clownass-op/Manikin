@@ -227,6 +227,7 @@ namespace ManikinApp
                 T("color_dark_shade_channels", true, ColorDarkChannels),
                 T("color_update_recolors_live", true, ColorUpdateLive),
                 T("emote_labels_all_play", false, EmoteLabelsPlay),
+                T("emote_six_seven_waggles", true, EmoteSixSeven),
                 T("emote_rest_keeps_head", true, EmoteRestKeepsHead),
                 T("emote_unsheath_keeps_head", true, EmoteUnsheathKeepsHead),
                 T("emote_stern_loop_count_stable", false, EmoteSternLoops),
@@ -466,6 +467,42 @@ namespace ManikinApp
             return kids.Any(k => k.StartsWith(prefix, StringComparison.Ordinal));
         }
 
+        // Distance between a shoulder pivot and its glove, in the rig's own
+        // coordinates. It stays at the arm length while the hand is attached.
+        static double ArmSpan(JObject st, string shoulder, string hand)
+        {
+            var s = st["parts"][shoulder] as JObject;
+            var h = st["parts"][hand] as JObject;
+            if (s == null || h == null) return 0;
+            double dx = (double)s["x"] - (double)h["x"];
+            double dy = (double)s["y"] - (double)h["y"];
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        // The glove offset in the shoulder's own (rotating) frame. If the hand
+        // stays on the sleeve this offset is constant through any animation.
+        static double[] ArmAnchor(JObject st, string shoulder, string hand)
+        {
+            var s = st["parts"][shoulder] as JObject;
+            var h = st["parts"][hand] as JObject;
+            double rot = (double)s["rot"] * Math.PI / 180;
+            double dx = (double)h["x"] - (double)s["x"];
+            double dy = (double)h["y"] - (double)s["y"];
+            return new[] { dx * Math.Cos(rot) + dy * Math.Sin(rot), -dx * Math.Sin(rot) + dy * Math.Cos(rot) };
+        }
+
+        static double ArmAttachError(JObject st, string shoulder, string hand, double[] anchor)
+        {
+            var s = st["parts"][shoulder] as JObject;
+            var h = st["parts"][hand] as JObject;
+            double rot = (double)s["rot"] * Math.PI / 180;
+            double ex = (double)s["x"] + anchor[0] * Math.Cos(rot) - anchor[1] * Math.Sin(rot);
+            double ey = (double)s["y"] + anchor[0] * Math.Sin(rot) + anchor[1] * Math.Cos(rot);
+            double dx = (double)h["x"] - ex;
+            double dy = (double)h["y"] - ey;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
         async Task<JObject> LoadArmor(string gender, string rel, string link)
         {
             await SetGender(gender);
@@ -693,6 +730,55 @@ namespace ManikinApp
                 if (!(bool)b["headOk"]) bad.Add(e + " lost head");
             }
             Expect(bad.Count == 0, "emotes: " + string.Join(", ", bad));
+        }
+
+        // The scripted "6 7" meme emote: owns the rig for ~2.2s, rocks the
+        // hands in opposite directions, then returns to Idle.
+        async Task EmoteSixSeven()
+        {
+            // Dressed, so the snapshots show arms leaving sleeves rather than
+            // an all-black skeleton silhouette.
+            await SetGender("F");
+            await LoadArmor("F", ArmorRobeF, "ccsephA");
+            await Load("Hair", HairBackF);
+            await Task.Delay(300);
+            Call("loadEmote", "Sixseven");
+            var labels = new List<string>();
+            double lo = double.MaxValue, hi = double.MinValue;
+            double blo = double.MaxValue, bhi = double.MinValue;
+            bool snapA = false, snapB = false;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 1200)
+            {
+                var st = MustState();
+                labels.Add((string)st["label"]);
+                var hand = st["parts"]["fronthand"] as JObject;
+                if (hand != null && hand["rot"] != null)
+                {
+                    double rot = (double)hand["rot"];
+                    if (rot < lo) lo = rot;
+                    if (rot > hi) hi = rot;
+                }
+                var off = st["parts"]["backhand"] as JObject;
+                if (off != null && off["rot"] != null)
+                {
+                    double rot = (double)off["rot"];
+                    if (rot < blo) blo = rot;
+                    if (rot > bhi) bhi = rot;
+                }
+                Expect((bool)st["headOk"], "head detached during 6-7");
+                if (!snapA && sw.ElapsedMilliseconds > 450) { Snap("emote67_a"); snapA = true; }
+                if (!snapB && sw.ElapsedMilliseconds > 950) { Snap("emote67_b"); snapB = true; }
+                await Task.Delay(30);
+            }
+            Note("6-7 spans: near " + (hi - lo).ToString("0.0") + " deg, far " + (bhi - blo).ToString("0.0") + " deg");
+            Expect(labels.Contains("Sixseven"), "6-7 label never played: " + string.Join(",", labels.Distinct()));
+            Expect(hi - lo > 8, "6-7 near hand barely moved (" + (hi - lo).ToString("0.0") + " degrees)");
+            Expect(bhi - blo > 8, "6-7 far hand barely moved (" + (bhi - blo).ToString("0.0") + " degrees)");
+            await Task.Delay(1400);
+            var end = MustState();
+            Expect((string)end["label"] != "Sixseven", "6-7 did not return to Idle (label " + end["label"] + ")");
+
         }
 
         async Task EmoteKeepsHead(string emote, string snapName)

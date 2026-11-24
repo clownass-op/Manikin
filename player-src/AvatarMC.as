@@ -585,6 +585,12 @@ package
       // throwing.
       public function loadEmote(param1:String) : *
       {
+         // The timeline label is "Sixseven"; a purely numeric label would be
+         // read as a frame number by gotoAndPlay.
+         if(param1 == "67" || param1 == "6 7")
+         {
+            param1 = "Sixseven";
+         }
          if(!this.hasFrameLabel(param1))
          {
             return;
@@ -1407,7 +1413,10 @@ package
             "attached":param1.stage != null,
             "kids":_loc2_,
             "m0":(param1.numChildren > 0 ? param1.getChildAt(0).transform.colorTransform.redMultiplier : -1),
-            "depth":(param1.parent != null ? param1.parent.getChildIndex(param1) : -1)
+            "depth":(param1.parent != null ? param1.parent.getChildIndex(param1) : -1),
+            "rot":param1.rotation,
+            "x":param1.x,
+            "y":param1.y
          };
       }
 

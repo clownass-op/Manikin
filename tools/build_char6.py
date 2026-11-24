@@ -15,6 +15,9 @@ Two steps, both reproducible from flash/char6-orig.swf:
 2. Script replace: player-src/*.as are compiled into the SWF with the
    JPEXS FFDec CLI (-replace), replacing AvatarMC, mcSkel and
    character5_fla.MainTimeline.
+3. The Sixseven emote: the keyframed 61-frame range from the SwordShine
+   532c player is appended to the end of the skeleton (label + move-only
+   placements), so it needs no character-id remap and no frame actions.
 """
 import argparse
 import os
@@ -27,6 +30,11 @@ import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKELETON_ID = 300
+# Keyframed Sixseven emote (label + 61 move-only frames) extracted from
+# the SwordShine 532c player. It only moves existing rig depths, so it needs
+# no character-id remapping and no frame actions.
+SIX_SEVEN_BIN = os.path.join(ROOT, "player-src", "sixseven.bin")
+SIX_SEVEN_FRAMES = 61
 # Dependency order: each class compiles against the ones replaced before it.
 SCRIPTS = [
     ("mcSkel", "mcSkel.as"),
@@ -115,6 +123,42 @@ def po2_name(d, p):
     if flags & 0x10:  # ratio
         q += 2
     return depth, bytes(d[q:d.index(b"\0", q)]).decode("utf-8", "replace")
+
+
+def add_six_seven(d):
+    """Append the keyframed Sixseven emote to the skeleton (sprite 300).
+
+    A real 61-frame timeline block (label + moves only), so both arms bend
+    at the elbow while the whole rig stays connected. Appending it at the
+    end keeps every existing frame number and frame script untouched."""
+    blob = open(SIX_SEVEN_BIN, "rb").read()
+    label = None
+    frames = 0
+    for c, s2, b2, l2 in iter_tags(blob, 0, len(blob)):
+        if c == 43 and label is None:
+            label = bytes(blob[b2:blob.index(b"\0", b2)]).decode("utf-8")
+        elif c == 1:
+            frames += 1
+        elif c in (26, 70):
+            if blob[b2] & 2:
+                raise SystemExit("Sixseven blob places a character id; needs remapping")
+        else:
+            raise SystemExit("Sixseven blob: unexpected tag %d" % c)
+    if label != "Sixseven" or frames != SIX_SEVEN_FRAMES:
+        raise SystemExit("bad Sixseven blob: label=%r frames=%d" % (label, frames))
+    for code, start, body, ln in iter_tags(d, first_tag(d), len(d)):
+        if code != 39 or struct.unpack_from("<H", d, body)[0] != SKELETON_ID:
+            continue
+        count = struct.unpack_from("<H", d, body + 2)[0]
+        end = body + ln - 2
+        if struct.unpack_from("<H", d, end)[0] != 0:
+            raise SystemExit("sprite %d has no trailing End tag" % SKELETON_ID)
+        new_body = bytearray(d[body:end]) + blob + bytearray(d[end:body + ln])
+        struct.pack_into("<H", new_body, 2, count + SIX_SEVEN_FRAMES)
+        out = d[:start] + tag_bytes(39, bytes(new_body)) + d[body + ln:]
+        struct.pack_into("<I", out, 4, len(out))
+        return out, count + SIX_SEVEN_FRAMES
+    raise SystemExit("skeleton sprite %d not found" % SKELETON_ID)
 
 
 def strip_stray_heads(d):
@@ -330,6 +374,8 @@ def main():
     if not a.no_timeline_fix:
         d, n = strip_stray_heads(d)
         print("timeline: removed %d stray head tags" % n)
+    d, total = add_six_seven(d)
+    print("timeline: appended keyframed Sixseven emote (%d frames total)" % total)
     tmp = tempfile.mkdtemp(prefix="char6-")
     try:
         stage = os.path.join(tmp, "stage.swf")
