@@ -58,12 +58,7 @@
     <Compile Include="Matte.cs" />
     <Compile Include="CatalogSync.cs" />
     <Compile Include="GitHub.cs" />
-    <!-- Not in the repo: build it with tools\build_wardrobe.py. Optional so a
-         checkout without it still builds (the Wardrobe then says so). -->
-    <Content Include="catalog\wardrobe.json" Condition="Exists('catalog\wardrobe.json')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <!-- Optional: wardrobe credentials. Never committed; see supabase.key.example. -->
+    <!-- Optional: wardrobe credentials. Never committed. -->
     <Content Include="supabase.key" Condition="Exists('supabase.key')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

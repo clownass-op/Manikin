@@ -181,7 +181,7 @@ namespace ManikinApp
         }
 
         // Token source: MANIKIN_GITHUB_TOKEN wins, then github.key next to the
-        // exe or one folder up (git-ignored, see github.key.example). One
+        // exe or one folder up (git-ignored). One
         // `token=` line; a bare token line also works.
         static class Config
         {

@@ -1206,7 +1206,7 @@ namespace ManikinApp
             await Js("project.bgScene='';sendBackground();");
         }
 
-        // Wardrobe panel (catalog\wardrobe.json): per-slot search, cleaned CDN
+        // Wardrobe panel (the catalog mirror): per-slot search, cleaned CDN
         // paths, the pager and the randomiser. access is ignored now that the
         // Free / Member / AC chips are gone; it stays so the call sites read
         // the same.

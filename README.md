@@ -56,9 +56,9 @@ no Supabase egress.
 The catalog otherwise uses Supabase with the publishable key compiled into
 `Wardrobe.cs` (`Config.DefaultUrl` / `Config.DefaultKey`), so a clone needs no
 key file. `MANIKIN_SUPABASE_URL` and `MANIKIN_SUPABASE_KEY` override it, as does
-an optional `supabase.key` next to the exe (git-ignored, see
-`supabase.key.example`). The old `catalog\wardrobe.json` backup is no longer
-read: the mirror replaced it, and a stale local copy hid real outages.
+an optional `supabase.key` next to the exe (git-ignored; one `url=` line and one
+`key=` line). No local `wardrobe.json` backup is used: the mirror replaced it,
+and a stale local copy hid real outages.
 
 A publishable key is **not** a read-only key: what it is allowed to do is decided
 by grants and row level security on the table. Keep `swfs` read-only for the
@@ -90,7 +90,8 @@ miss fetches from the game CDN. The bytes go straight to the Flash player, so a
 character load writes nothing to the device.
 
 Saving them needs a token - `MANIKIN_GITHUB_TOKEN`, or a `github.key` next to the
-exe (git-ignored, see `github.key.example`). It is deliberately not compiled in:
+exe (git-ignored; one `token=` line, from a fine-grained token with Contents:
+read and write on that repo). It is deliberately not compiled in:
 a published exe must stay read-only, or anyone could push to the repo every copy
 downloads from. Without a token, saves fall back to the Supabase `char_swfs`
 table (`tools/char_swfs.sql`), which is still read as a second-chance cache.
