@@ -29,7 +29,6 @@ namespace ManikinApp
         const int BatchSize = 200;     // rows per PostgREST insert
         const int RequestGapMs = 210;  // 300 calls/min is the API's limit: ~285/min
         const int Workers = 4;         // requests in flight while the gap paces them
-        const int MaxNames = 12;       // names one catalog row may carry
 
         sealed class Remote
         {
@@ -44,10 +43,6 @@ namespace ManikinApp
 
         static readonly object _gate = new object();
         static List<Remote> _plan = new List<Remote>();
-        // path -> every distinct name aqcloset lists it under. Apply() attaches
-        // the extras to the row we already hold, so one SWF answers to all of
-        // its names and searching any of them finds the item.
-        static Dictionary<string, List<string>> _alts = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         static readonly HttpClient Http = CreateClient();
 
         // Read by the page while a job runs, so it can show progress.
@@ -128,14 +123,12 @@ namespace ManikinApp
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var missing = new List<Remote>();
                 var counters = new int[3];        // repeats, already held, junk
-                var names = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 var planGate = new object();
 
                 Action<PageResult> take = page =>
                 {
                     int rep = 0, hld = 0, jnk = 0;
                     var mine = new List<Remote>(page.Items.Count);
-                    var named = new List<Remote>(page.Items.Count);
                     foreach (Remote it in page.Items)
                     {
                         if (string.IsNullOrEmpty(it.Name) || string.IsNullOrEmpty(it.File)) continue;
@@ -143,14 +136,12 @@ namespace ManikinApp
                         // wardrobe drops these rows anyway, so writing them only
                         // litters the table and poisons later batches.
                         if (!it.File.EndsWith(".swf", StringComparison.OrdinalIgnoreCase)) { jnk++; continue; }
-                        named.Add(it);                                      // a real listing: keep its name
                         if (have.Contains(it.File)) { hld++; continue; }    // already in our table
                         if (!seen.Add(it.File)) { rep++; continue; }        // same art listed twice
                         mine.Add(it);
                     }
                     lock (planGate)
                     {
-                        Collect(names, named);
                         counters[0] += rep; counters[1] += hld; counters[2] += jnk;
                         missing.AddRange(mine);
                         _done = Math.Min(_done + page.Items.Count, total);
@@ -189,13 +180,7 @@ namespace ManikinApp
 
                 int repeat = counters[0], held = counters[1], junk = counters[2];
 
-                // Listings beyond the first name of a path: the alternates Apply
-                // can attach. Names that differ only in punctuation drop out
-                // when Apply compares them with the catalog itself.
-                int altCount = 0;
-                foreach (var kv in names) altCount += Math.Max(0, kv.Value.Count - 1);
-
-                lock (_gate) { _plan = missing; _alts = names; }
+                lock (_gate) _plan = missing;
                 _phase = "Scan complete";
                 // Lower-case keys: the page reads name/file/slot, matching the API.
                 var sample = missing.Take(300).Select(m => new JObject
@@ -211,7 +196,6 @@ namespace ManikinApp
                     alreadyHave = held,
                     repeats = repeat,
                     junk = junk,
-                    altNames = altCount,
                     target = Target(),
                     sample
                 });
@@ -224,13 +208,8 @@ namespace ManikinApp
         public static string Apply()
         {
             List<Remote> plan;
-            Dictionary<string, List<string>> altNames;
-            lock (_gate)
-            {
-                plan = new List<Remote>(_plan);
-                altNames = new Dictionary<string, List<string>>(_alts, StringComparer.OrdinalIgnoreCase);
-            }
-            if (plan.Count == 0 && altNames.Count == 0) return Fail("Nothing planned. Run the scan first.");
+            lock (_gate) plan = new List<Remote>(_plan);
+            if (plan.Count == 0) return Fail("Nothing planned. Run the scan first.");
             // GitHub needs no Supabase credentials; only the table fallback does.
             if (!GitHub.Writable && (string.IsNullOrEmpty(Wardrobe.SupabaseUrl) ||
                                      string.IsNullOrEmpty(Wardrobe.SupabaseKey)))
@@ -256,20 +235,16 @@ namespace ManikinApp
             }
             catch (Exception ex) { AppForm.Dbg("catalog sync dedupe failed: " + ex.Message); }
             int skipped = plannedBefore - plan.Count;
-            if (plan.Count == 0 && altNames.Count == 0)
+            if (plan.Count == 0)
             {
                 lock (_gate) _plan.Clear();
                 _phase = "Done";
-                return JsonConvert.SerializeObject(new { ok = true, target = Target(), planned = 0, added = 0, failed = 0, skipped, error = "", altAdded = 0 });
+                return JsonConvert.SerializeObject(new { ok = true, target = Target(), planned = 0, added = 0, failed = 0, skipped, error = "" });
             }
 
             // One commit for the whole plan: rewriting the 2 MB mirror once
             // beats thousands of row inserts, and the app reads it straight back.
-            // Alt names ride along in the same commit; only the mirror has a
-            // name field to put them in, so the Supabase fallback cannot.
-            if (GitHub.Writable) return ApplyToGitHub(plan, skipped, altNames);
-            if (altNames.Count > 0)
-                AppForm.Dbg("catalog sync: " + altNames.Count + " paths carry extra aqcloset names, which only the GitHub mirror stores");
+            if (GitHub.Writable) return ApplyToGitHub(plan, skipped);
 
             _phase = "Adding items"; _done = 0; _total = plan.Count;
             int added = 0, failed = 0, already = 0;
@@ -348,7 +323,7 @@ namespace ManikinApp
         // Append the plan to the GitHub mirror and commit it once. Rows already
         // in the file are skipped, and the file is rewritten sorted by path so a
         // diff shows only the new items.
-        static string ApplyToGitHub(List<Remote> plan, int skipped, Dictionary<string, List<string>> altNames)
+        static string ApplyToGitHub(List<Remote> plan, int skipped)
         {
             _phase = "Reading the GitHub catalog"; _done = 0; _total = plan.Count;
             string sha, error;
@@ -365,13 +340,11 @@ namespace ManikinApp
             catch (Exception ex) { return Fail("GitHub catalog unreadable: " + ex.Message); }
 
             var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var index = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
             foreach (JToken t in rows)
             {
                 string p = (string)t["path"];
                 if (string.IsNullOrEmpty(p)) continue;
                 have.Add(p);
-                index[p] = t as JObject;
             }
 
             int added = 0, already = 0;
@@ -379,14 +352,9 @@ namespace ManikinApp
             {
                 if (r == null || string.IsNullOrEmpty(r.File)) continue;
                 if (!have.Add(r.File)) { already++; continue; }
-                // New rows carry their own alternates too: aqcloset often lists
-                // the same art twice, once per name.
-                string name = r.Name;
-                string more = Extras(altNames, r.File, name);
-                if (more.Length > 0) name += "|" + more;
                 rows.Add(new JObject
                 {
-                    { "name", name },
+                    { "name", r.Name },
                     { "path", r.File },
                     { "category", r.Slot },
                     { "item_group", r.Wtype ?? "" },
@@ -397,37 +365,14 @@ namespace ManikinApp
                 if (added % 250 == 0) AppForm.Dbg("catalog sync: " + added + " new items staged");
             }
 
-            // Names the catalog does not answer to yet, attached to rows already
-            // in the mirror. This runs even when nothing is missing: a caught-up
-            // catalog is exactly when the extra names are all that is left.
-            int altAdded = 0, altPaths = 0;
-            _phase = "Attaching alternate names";
-            _total = altNames.Count;
-            _done = 0;
-            foreach (var kv in altNames)
-            {
-                _done++;
-                JObject row;
-                if (!index.TryGetValue(kv.Key, out row) || row == null) continue;
-                string field = (string)row["name"] ?? "";
-                string more = Extras(kv.Value, field);
-                if (more.Length == 0) continue;
-                // A row with no name must not gain a leading pipe: AddRow would
-                // read that as an empty primary name and drop the item.
-                row["name"] = field.Length == 0 ? more : field + "|" + more;
-                altAdded += more.Split('|').Length;
-                altPaths++;
-                if (altPaths <= 8) Note("= " + kv.Key + "  also: " + more.Replace("|", ", "));
-            }
-
-            if (added == 0 && altAdded == 0)
+            if (added == 0)
             {
                 _phase = "Done";
                 lock (_gate) _plan.Clear();
                 return JsonConvert.SerializeObject(new
                 {
                     ok = true, target = "github", planned = plan.Count,
-                    added = 0, failed = 0, already, skipped, error = "", altAdded = 0, altPaths = 0
+                    added = 0, failed = 0, already, skipped, error = ""
                 });
             }
 
@@ -444,10 +389,7 @@ namespace ManikinApp
             }
 
             _phase = "Writing the GitHub catalog";
-            var what = new List<string>();
-            if (added > 0) what.Add("add " + added + " items");
-            if (altAdded > 0) what.Add(altAdded + " alternate names");
-            string message = "catalog: " + string.Join(", ", what.ToArray());
+            string message = "catalog: add " + added + " items";
             if (!GitHub.PutFile("catalog.json.gz", gzBytes, message, sha, out error))
                 return Fail("GitHub write failed: " + error);
 
@@ -456,63 +398,12 @@ namespace ManikinApp
             _phase = "Done";
             lock (_gate) _plan.Clear();
             Wardrobe.Reload();
-            AppForm.Dbg("catalog sync: added " + added + " items to GitHub (" + already + " already there), " +
-                        altAdded + " alternate names on " + altPaths + " items");
+            AppForm.Dbg("catalog sync: added " + added + " items to GitHub (" + already + " already there)");
             return JsonConvert.SerializeObject(new
             {
                 ok = true, target = "github", planned = plan.Count,
-                added, failed = 0, already, skipped, error = "", altAdded, altPaths
+                added, failed = 0, already, skipped, error = ""
             });
-        }
-
-        // Add one page's names to the path -> names map, folded-equal ones
-        // dropped so "Gan's" and "Gan\u2019s" do not both count.
-        static void Collect(Dictionary<string, List<string>> names, List<Remote> page)
-        {
-            foreach (Remote it in page)
-            {
-                List<string> got;
-                if (!names.TryGetValue(it.File, out got))
-                {
-                    got = new List<string>(2);
-                    names.Add(it.File, got);
-                }
-                if (got.Count >= MaxNames) continue;
-                string key = Wardrobe.Fold(it.Name);
-                bool dup = false;
-                foreach (string n in got) if (Wardrobe.Fold(n) == key) { dup = true; break; }
-                if (!dup) got.Add(it.Name);
-            }
-        }
-
-        // The names in `names` that `current` (a pipe-separated name field)
-        // does not answer to yet, pipe-joined. Punctuation/case-only differences
-        // and anything past MaxNames are dropped.
-        static string Extras(Dictionary<string, List<string>> names, string path, string current)
-        {
-            List<string> got;
-            if (path == null || !names.TryGetValue(path, out got)) return "";
-            return Extras(got, current);
-        }
-
-        static string Extras(List<string> names, string current)
-        {
-            var known = new HashSet<string>(StringComparer.Ordinal);
-            foreach (string part in (current ?? "").Split('|'))
-            {
-                string k = Wardrobe.Fold(part).Trim();
-                if (k.Length > 0) known.Add(k);
-            }
-            var add = new List<string>();
-            foreach (string raw in names)
-            {
-                if (known.Count >= MaxNames) break;
-                string n = (raw ?? "").Trim();
-                string k = Wardrobe.Fold(n).Trim();
-                if (k.Length == 0 || !known.Add(k)) continue;
-                add.Add(n.Replace('|', ' '));
-            }
-            return string.Join("|", add.ToArray());
         }
 
         // catalog.meta.json is the mirror's own report: row count, uncompressed

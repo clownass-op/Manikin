@@ -427,9 +427,6 @@ namespace ManikinApp
         // Deduplicate slot+path rows (the DB repeats some items, e.g. "Legion
         // DoomKnight" as Armor and Class; rows with real meta win) and sort A-Z
         // by name. Shared by the snapshot and PostgREST paths.
-        // Rows that share a SWF but carry different names are not dropped: the
-        // name joins the kept item's Alts, so every name aqcloset lists the art
-        // under finds the one item.
         static List<Item> Slim(List<Item> list)
         {
             var seen = new Dictionary<string, Item>();
@@ -440,41 +437,16 @@ namespace ManikinApp
                 Item old;
                 if (!seen.TryGetValue(key, out old)) { seen[key] = it; slim.Add(it); continue; }
 
-                // Same slot, same SWF, another name: aqcloset lists one file once
-                // per name it has for the art ("Vaza's Custom Set Sign", "Skyper's
-                // ..."), so keep the name as an alternate instead of losing it.
+                // Same slot, same SWF: the row with real meta takes the slot.
                 if (old.Rarity == "(no rarity)" && it.Rarity != "(no rarity)")
                 {
-                    // The row with meta takes the slot but inherits every name.
-                    string[] carried = old.Alts;
-                    string carriedName = old.Name;
                     int i = slim.IndexOf(old);
                     if (i >= 0) slim[i] = it;
                     seen[key] = it;
-                    AddAlt(it, carriedName);
-                    foreach (var a in carried) AddAlt(it, a);
-                    continue;
                 }
-                AddAlt(old, it.Name);
-                foreach (var a in it.Alts) AddAlt(old, a);
             }
             slim.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             return slim;
-        }
-
-        // One more name for the same art. Folded-equal names are skipped, so
-        // "Gan's" and "Gan\u2019s" stay one entry, and the haystack is rebuilt
-        // so the new name is findable straight away.
-        static void AddAlt(Item it, string name)
-        {
-            if (it == null || string.IsNullOrEmpty(name)) return;
-            string key = Fold(name);
-            if (key.Length == 0 || key == Fold(it.Name)) return;
-            foreach (var a in it.Alts) if (Fold(a) == key) return;
-            var alts = new List<string>(it.Alts);
-            alts.Add(name.Trim());
-            it.Alts = alts.ToArray();
-            Reindex(it);
         }
 
         static void Reindex(Item it)
