@@ -360,7 +360,7 @@ namespace ManikinApp
             JObject row = r as JObject;
             if (row == null) return;
 
-            string name = TrimOr((string)row["name"]);
+            string name = Clean(TrimOr((string)row["name"]));
             string path = TrimOr((string)row["path"]);
             string category = TrimOr((string)row["category"]);
             string itemGroup = TrimOr((string)row["item_group"]);
@@ -387,7 +387,7 @@ namespace ManikinApp
                         JToken rv = m["rarity"];
                         if (rv != null && rv.Type != JTokenType.Null && ((string)rv).Length > 0) rarity = (string)rv;
                         JToken wv = m["where"];
-                        if (wv != null && wv.Type != JTokenType.Null) where = (string)wv;
+                        if (wv != null && wv.Type != JTokenType.Null) where = Clean((string)wv);
                         // "state" is the availability ("in-game", "rare",
                         // "unobtainable"), separate from the rarity tier.
                         JToken sv = m["state"];
@@ -405,6 +405,7 @@ namespace ManikinApp
             if (pipe >= 0)
             {
                 alts = name.Substring(pipe + 1).Split('|');
+                for (int i = 0; i < alts.Length; i++) alts[i] = Clean(alts[i]);
                 name = name.Substring(0, pipe);
             }
 
@@ -489,6 +490,30 @@ namespace ManikinApp
         // search for "gan's" matched nothing. Fold quotes to one form and drop
         // apostrophes entirely: "gan's", "gan\u2019s" and "gans" all hit the
         // same item, and the same folding runs over both sides of the compare.
+        // Part of the catalog was imported through a CP1252 pipe, so a typographic
+        // apostrophe arrives as its UTF-8 bytes read as Windows-1252 - "DShark's"
+        // with a real U+2019 shows up as "DSharka-hat-euro-tm s". Undo that round
+        // trip when the whole string is CP1252 and those bytes are valid UTF-8;
+        // anything else (a genuine accent, a name with Cyrillic) is left alone.
+        static readonly Encoding Cp1252 = Encoding.GetEncoding(1252,
+            new EncoderExceptionFallback(), new DecoderExceptionFallback());
+        static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
+        internal static string Clean(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            bool suspect = false;
+            foreach (char c in s) if (c >= '\u0080') { suspect = true; break; }
+            if (!suspect) return s;
+            try
+            {
+                byte[] bytes = Cp1252.GetBytes(s);
+                string repaired = StrictUtf8.GetString(bytes);
+                return repaired.Length < s.Length ? repaired : s;
+            }
+            catch { return s; }
+        }
+
         internal static string Fold(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";
