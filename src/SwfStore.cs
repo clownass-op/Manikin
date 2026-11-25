@@ -31,6 +31,7 @@ namespace ManikinApp
         static readonly object _gate = new object();
         static bool _warned;
         static bool _noName;   // table predates the name/linkage columns
+        static bool _storeChecked, _storeThere;   // does swfs/ exist in the mirror?
 
         static SwfStore()
         {
@@ -62,17 +63,22 @@ namespace ManikinApp
             byte[] hit;
             lock (_gate) if (_mem.TryGetValue(key, out hit)) return hit;
 
-            // GitHub first: one raw GET, no token, no API quota.
-            try
+            // GitHub first: one raw GET, no token, no API quota - but only when
+            // the store has anything in it. Asking per item for a folder that
+            // does not exist was a 404 per item on every single load.
+            if (GitHubStore())
             {
-                byte[] raw = GitHub.GetRaw("swfs/" + key);
-                if (raw != null && raw.Length > 4)
+                try
                 {
-                    Remember(key, raw);
-                    return raw;
+                    byte[] raw = GitHub.GetRaw("swfs/" + key);
+                    if (raw != null && raw.Length > 4)
+                    {
+                        Remember(key, raw);
+                        return raw;
+                    }
                 }
+                catch (Exception ex) { AppForm.Dbg("char swf store: github read failed: " + ex.Message); }
             }
-            catch (Exception ex) { AppForm.Dbg("char swf store: github read failed: " + ex.Message); }
 
             // Second chance: the old Supabase cache, so the rows written before
             // the move still render without re-fetching the CDN.
@@ -102,9 +108,37 @@ namespace ManikinApp
             catch (Exception ex) { AppForm.Dbg("char swf store: read failed: " + ex.Message); return null; }
         }
 
-        // Upsert one row (resolution=merge-duplicates, so an existing path
-        // updates instead of failing the insert). false = not persisted; the
-        // caller still holds the bytes, so this never blocks the preview.
+        // A store that was never populated would cost a 404 per item, so ask the
+        // API once per session whether swfs/ is there. A successful write proves
+        // it is, from then on without asking again.
+        static bool GitHubStore()
+        {
+            lock (_gate)
+            {
+                if (!_storeChecked) { _storeThere = GitHub.FolderExists("swfs"); _storeChecked = true; }
+                return _storeThere;
+            }
+        }
+
+        // Persisting an SWF is a commit (or a table insert); the player only needs
+        // the bytes, which the caller already has. Doing it on a worker keeps the
+        // preview from waiting on a write it does not use.
+        public static void PutLater(string key, byte[] bytes, string name = null, string linkage = null)
+        {
+            if (string.IsNullOrEmpty(key) || bytes == null || bytes.Length < 4) return;
+            Remember(key, bytes);
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { Put(key, bytes, name, linkage); } catch { }
+            });
+        }
+
+        // Insert one row, append-only (resolution=ignore-duplicates, so a stored
+        // path is left exactly as it is instead of being overwritten). false =
+        // not persisted; the caller still holds the bytes, so this never blocks
+        // the preview. Insert-only is what lets the table keep an open insert
+        // grant for contributions while update and delete stay revoked: nobody
+        // can replace the art under a path someone else's loader trusts.
         public static bool Put(string key, byte[] bytes, string name = null, string linkage = null)
         {
             if (string.IsNullOrEmpty(key) || bytes == null || bytes.Length < 4) return false;
@@ -115,7 +149,11 @@ namespace ManikinApp
             if (GitHub.Writable)
             {
                 string ghError;
-                if (GitHub.PutFile("swfs/" + key, bytes, "swf: " + key, null, out ghError)) return true;
+                if (GitHub.PutFile("swfs/" + key, bytes, "swf: " + key, null, out ghError))
+                {
+                    _storeThere = true; _storeChecked = true;
+                    return true;
+                }
                 AppForm.Dbg("char swf store: github write failed (" + ghError + "), trying Supabase");
             }
             if (Endpoint == null) return false;
@@ -163,7 +201,9 @@ namespace ManikinApp
                     req.Content = new StringContent(new JArray(row).ToString(Formatting.None), Encoding.UTF8, "application/json");
                     req.Headers.Add("apikey", Key);
                     req.Headers.Add("Authorization", "Bearer " + Key);
-                    req.Headers.Add("Prefer", "resolution=merge-duplicates,return=minimal");
+                    // ignore-duplicates, not merge-duplicates: contributions
+                    // may add a path, never rewrite one (see the note on Put).
+                    req.Headers.Add("Prefer", "resolution=ignore-duplicates,return=minimal");
                     var resp = Http.SendAsync(req).GetAwaiter().GetResult();
                     status = (int)resp.StatusCode;
                     return resp.IsSuccessStatusCode ? "" : ReadBody(resp);

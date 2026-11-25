@@ -27,18 +27,21 @@ alter table public.char_swfs add column if not exists linkage text;
 
 alter table public.char_swfs enable row level security;
 
-grant select, insert, update on public.char_swfs to anon, authenticated;
+-- Append-only, like the catalog: anyone may contribute art, nobody may rewrite
+-- or remove what is already stored. The app inserts with
+-- resolution=ignore-duplicates (SwfStore.Send), so a stored path is left as it
+-- is rather than overwritten - that is what makes insert-only enough.
+grant select, insert on public.char_swfs to anon, authenticated;
 
 drop policy if exists char_swfs_read on public.char_swfs;
 create policy char_swfs_read on public.char_swfs
   for select to anon, authenticated using (true);
 
--- The app writes with the same publishable key it reads the catalog with, so
--- inserts and the upsert's update branch both need a policy.
 drop policy if exists char_swfs_insert on public.char_swfs;
 create policy char_swfs_insert on public.char_swfs
   for insert to anon, authenticated with check (true);
 
+-- Re-running this file also repairs a table created by the first revision,
+-- which granted update and carried an update policy.
 drop policy if exists char_swfs_update on public.char_swfs;
-create policy char_swfs_update on public.char_swfs
-  for update to anon, authenticated using (true) with check (true);
+revoke update, delete, truncate on public.char_swfs from anon, authenticated;

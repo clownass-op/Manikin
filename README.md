@@ -74,17 +74,27 @@ an optional `supabase.key` next to the exe (git-ignored; one `url=` line and one
 and a stale local copy hid real outages.
 
 A publishable key is **not** a read-only key: what it is allowed to do is decided
-by grants and row level security on the table. Keep `swfs` read-only for the
-`anon` role so a published key cannot be used to insert rows:
+by grants and row level security on the table. The policy the app is built
+around is **append-only** - anybody may contribute an item, nobody may change or
+remove one:
 
 ```sql
-revoke insert, update, delete, truncate on public.swfs from anon, authenticated;
-grant select on public.swfs to anon, authenticated;
+revoke update, delete, truncate on public.swfs from anon, authenticated;
+grant select, insert on public.swfs to anon, authenticated;
 alter table public.swfs enable row level security;
 drop policy if exists swfs_read_only on public.swfs;
 create policy swfs_read_only on public.swfs
   for select to anon, authenticated using (true);
+drop policy if exists swfs_append on public.swfs;
+create policy swfs_append on public.swfs
+  for insert to anon, authenticated with check (true);
 ```
+
+Without an `update` or `delete` grant a copy of the exe can add an item but
+cannot rewrite an existing one or empty the catalog; a duplicate path is
+rejected by the primary key, which `CatalogSync` already tolerates. A mistaken
+row is removed by the owner in the Supabase SQL editor, which runs as the owner
+and is unaffected by grants or RLS.
 
 ## Catalog mirror
 
@@ -108,6 +118,9 @@ read and write on that repo). It is deliberately not compiled in:
 a published exe must stay read-only, or anyone could push to the repo every copy
 downloads from. Without a token, saves fall back to the Supabase `char_swfs`
 table (`tools/char_swfs.sql`), which is still read as a second-chance cache.
+That table is append-only too - it keeps an open `insert` grant but no `update`
+or `delete` - so a token-less copy can contribute art without being able to
+replace the bytes stored under a path other clients already trust.
 
 ## Catalog sync
 
