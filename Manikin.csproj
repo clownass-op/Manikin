@@ -45,19 +45,9 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Program.cs" />
-    <Compile Include="FlashCore.cs" />
-    <Compile Include="Downloads.cs" />
-    <Compile Include="GradientScene.cs" />
-    <Compile Include="SwfStore.cs" />
-    <Compile Include="AppForm.cs" />
-    <Compile Include="Headless.cs" />
-    <Compile Include="Wardrobe.cs" />
-    <Compile Include="GifWriter.cs" />
-    <Compile Include="WebpWriter.cs" />
-    <Compile Include="Matte.cs" />
-    <Compile Include="CatalogSync.cs" />
-    <Compile Include="GitHub.cs" />
+    <!-- All app code lives under src/; the folders below stay at the root
+         because they are copied verbatim next to the exe (ui\, flash\). -->
+    <Compile Include="src\**\*.cs" />
     <!-- Optional: wardrobe credentials. Never committed. -->
     <Content Include="supabase.key" Condition="Exists('supabase.key')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

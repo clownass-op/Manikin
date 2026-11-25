@@ -37,6 +37,19 @@ msbuild Manikin.csproj /p:Configuration=Release /p:Platform=x86
 
 The exe lands in `bin\Manikin.exe`.
 
+## Layout
+
+| Path | What lives there |
+|---|---|
+| `src/` | the C# app, one namespace (`ManikinApp`) |
+| `ui/` | WebView2 control panel (HTML/CSS/JS), copied to `bin\ui` |
+| `flash/` | player build, interop DLLs and scene SWFs, copied to `bin\flash` |
+| `player-src/` | ActionScript sources behind `flash\char6.swf` |
+| `tools/` | `build_char6.py`, the `char_swfs.sql` schema, local `ffmpeg.exe` |
+| `packages/` | vendored WebView2 NuGet package |
+
+The catalog mirror exporter is not in this repo; see *Catalog mirror* below.
+
 ## Run
 
 1. Launch `bin\Manikin.exe`.
