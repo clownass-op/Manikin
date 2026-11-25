@@ -2068,7 +2068,8 @@ try { dlSwfBox.checked = localStorage.getItem('fb.dlSwf') !== '0'; } catch (e) {
 dlSwfBox.onchange = applyDlSwf;
 applyDlSwf();
 
-// Settings > Catalog: diff aqcloset.com against our Supabase table and add
+// Settings > Catalog: diff aqcloset.com against whatever Apply() writes to
+// (the GitHub catalog when a token is set, else the Supabase table) and add
 // the items we are missing. Scan first (Read-only), then confirm the insert.
 // Live list of the items the sync has added, written into the monitor box
 // itself (the one that otherwise shows character data).
@@ -2127,8 +2128,9 @@ if (catBtn) catBtn.onclick = async () => {
     catBusy(false);
     return;
   }
-  if (!plan.missing) {
-    catInfo.textContent = 'Up to date: all ' + plan.remote + ' items from aqcloset.com are already in the database.';
+  const alts = plan.altNames || 0;
+  if (!plan.missing && !alts) {
+    catInfo.textContent = 'Up to date: all ' + plan.remote + ' listings from aqcloset.com are already in the database, under the names we hold.';
     monRestore();
     catBusy(false);
     return;
@@ -2137,18 +2139,27 @@ if (catBtn) catBtn.onclick = async () => {
   // short line so it can never push the box out of the panel.
   const list = (plan.sample || []).map(s => (s.name || s.Name) + '  (' + (s.file || s.File) + ')');
   if (monBox) {
-    monBox.textContent = 'aqcloset.com lists ' + plan.remote + ' items.\n' + plan.missing + ' of them are not in the database:\n\n'
-      + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '');
+    monBox.textContent = plan.missing
+      ? 'aqcloset.com lists ' + plan.remote + ' listings.\n' + plan.missing + ' of them are not in the database:\n\n'
+        + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '')
+      : 'aqcloset.com lists ' + plan.remote + ' listings for the ' + plan.ours.toLocaleString('en-US') + ' items we hold.\n\n'
+        + alts + ' of those listings carry a name we do not have yet. They become the "same art" names of the item,\n'
+        + 'so searching any of them finds it.';
     monBox.scrollTop = 0;
   }
-  const go = await catAsk('Add ' + plan.missing + ' missing items to Supabase?');
+  const where = (plan.target || 'supabase') === 'github' ? 'GitHub' : 'Supabase';
+  const go = await catAsk(plan.missing
+    ? 'Add ' + plan.missing + ' missing items to ' + where + (alts ? ' and attach ' + alts + ' alternate names?' : '?')
+    : 'Attach ' + alts + ' alternate names to items we already hold?');
   if (!go) {
     // Keep the list on screen: cancelled is exactly when you want to read it.
-    catInfo.textContent = 'Cancelled - ' + plan.missing + ' items were not added.';
+    catInfo.textContent = plan.missing
+      ? 'Cancelled - ' + plan.missing + ' items were not added.'
+      : 'Cancelled - no alternate names were attached.';
     catBusy(false);
     return;
   }
-  catInfo.textContent = 'Adding ' + plan.missing + ' items...';
+  catInfo.textContent = 'Adding ' + plan.missing + ' items' + (alts ? ' and ' + alts + ' alternate names' : '') + '...';
   const tick2 = setInterval(async () => {
     try {
       const p = JSON.parse(await post('catalogSyncProgress') || '{}');
@@ -2162,11 +2173,11 @@ if (catBtn) catBtn.onclick = async () => {
   catBusy(false);
   try { catFeed(JSON.parse(await post('catalogSyncProgress') || '{}')); } catch (e) {}
   if (!res || !res.ok) {
-    catInfo.textContent = 'Added ' + ((res && res.added) || 0) + ', failed ' + ((res && res.failed) || 0) + ((res && res.error) ? ' - ' + res.error : '') + ' (see the Log tab)';
+    catInfo.textContent = 'Added ' + ((res && res.added) || 0) + ', alternate names ' + ((res && res.altAdded) || 0) + ', failed ' + ((res && res.failed) || 0) + ((res && res.error) ? ' - ' + res.error : '') + ' (see the Log tab)';
     monRestore();
     return;
   }
-  catInfo.textContent = 'Added ' + res.added + ' items. Reloading the wardrobe...';
+  catInfo.textContent = 'Added ' + res.added + ' items' + (res.altAdded ? ' and ' + res.altAdded + ' alternate names' : '') + '. Reloading the wardrobe...';
   wdReset();
   wdQuery();
 };
@@ -2390,7 +2401,7 @@ function pagerEl() {
 
 function wdRowEl(it) {
   const row = wdEl('div', 'wd-row');
-  row.title = it.n;
+  row.title = it.alt.length ? it.n + '\nAlso called: ' + it.alt.join(', ') : it.n;
   row._t = wdType(it);
   row._f = wdNorm(row._t, it.f);
   const txt = wdEl('div', 'wd-txt');
@@ -2495,7 +2506,7 @@ function wdRenderCard() {
   card.appendChild(hd);
   if (it) {
     if (it.alt.length)
-      card.appendChild(wdEl('div', 'k', 'Same art: ' + it.alt.slice(0, 6).join(', ') + (it.alt.length > 6 ? ' +' + (it.alt.length - 6) + ' more' : '')));
+      card.appendChild(wdEl('div', 'k', 'Same art: ' + it.alt.join(', ')));
     card.appendChild(wdEl('div', 'k', [it.w, it.r || 'No rarity', it.m ? 'Member' : 'Free', it.ac ? 'AC' : 'Gold'].filter(Boolean).join(' · ')));
     card.appendChild(wdEl('div', 'k', it.where ? 'From ' + it.where : 'Source unknown'));
   }

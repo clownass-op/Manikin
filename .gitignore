@@ -33,5 +33,9 @@ catalog/wardrobe.json
 # compiled into Wardrobe.cs, so no file is needed (see README).
 supabase.key
 
+# GitHub write token for the catalog repo (Contents API). A published exe must
+# not carry one, so it stays out of git; see github.key.example.
+github.key
+
 # ffmpeg is fetched locally - too large for the repo (GitHub rejects >100 MB)
 tools/ffmpeg.exe

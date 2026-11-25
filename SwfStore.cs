@@ -7,8 +7,11 @@ using Newtonsoft.Json.Linq;
 
 namespace ManikinApp
 {
-    // SwfStore: the item SWFs the CharPage loader needs, kept in Supabase
-    // (table char_swfs, see tools/char_swfs.sql) instead of on the user's disk.
+    // SwfStore: the item SWFs the CharPage loader needs, kept in the GitHub
+    // catalog repo under swfs/<path> instead of on the user's disk. Reads are
+    // plain raw.githubusercontent.com GETs; writes need a token (see GitHub.cs),
+    // so a published exe stays read-only. Without one, writes and second-chance
+    // reads use the old Supabase char_swfs table.
     // One row per CDN path: name, linkage, bytes, size. Keyed by path so two
     // characters wearing the same helm share one copy, and a second machine can
     // render a character without going near the game CDN.
@@ -51,12 +54,29 @@ namespace ManikinApp
             return (rel ?? "").Replace('\\', '/').Trim().TrimStart('/').ToLowerInvariant();
         }
 
-        // This session's copy, else one row from the table. null = not stored.
+        // This session's copy, else the GitHub file, else one table row.
+        // null = not stored anywhere.
         public static byte[] Get(string key)
         {
-            if (!Enabled || string.IsNullOrEmpty(key)) return null;
+            if (string.IsNullOrEmpty(key)) return null;
             byte[] hit;
             lock (_gate) if (_mem.TryGetValue(key, out hit)) return hit;
+
+            // GitHub first: one raw GET, no token, no API quota.
+            try
+            {
+                byte[] raw = GitHub.GetRaw("swfs/" + key);
+                if (raw != null && raw.Length > 4)
+                {
+                    Remember(key, raw);
+                    return raw;
+                }
+            }
+            catch (Exception ex) { AppForm.Dbg("char swf store: github read failed: " + ex.Message); }
+
+            // Second chance: the old Supabase cache, so the rows written before
+            // the move still render without re-fetching the CDN.
+            if (Endpoint == null) return null;
             try
             {
                 string url = Endpoint + "?select=data&path=eq." + Uri.EscapeDataString(key) + "&limit=1";
@@ -87,8 +107,18 @@ namespace ManikinApp
         // caller still holds the bytes, so this never blocks the preview.
         public static bool Put(string key, byte[] bytes, string name = null, string linkage = null)
         {
-            if (!Enabled || string.IsNullOrEmpty(key) || bytes == null || bytes.Length < 4) return false;
+            if (string.IsNullOrEmpty(key) || bytes == null || bytes.Length < 4) return false;
             Remember(key, bytes);
+
+            // GitHub is the store now: one file per path, same key as the
+            // catalog. A 422 here means the file was already stored.
+            if (GitHub.Writable)
+            {
+                string ghError;
+                if (GitHub.PutFile("swfs/" + key, bytes, "swf: " + key, null, out ghError)) return true;
+                AppForm.Dbg("char swf store: github write failed (" + ghError + "), trying Supabase");
+            }
+            if (Endpoint == null) return false;
             int status;
             string err = Send(key, bytes, name, linkage, out status);
 

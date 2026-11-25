@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -12,7 +14,8 @@ using Newtonsoft.Json.Linq;
 namespace ManikinApp
 {
     // Wardrobe: the catalog behind the Wardrobe panel.
-    // Now queries Supabase DB (zcuywyfxqvrmrmeivmcn) instead of local wardrobe.json.
+    // Reads the GitHub catalog mirror first, then the Supabase DB
+    // (zcuywyfxqvrmrmeivmcn). There is no local wardrobe.json any more.
     // Falls back to JSON if Supabase is unavailable.
     static class Wardrobe
     {
@@ -21,15 +24,21 @@ namespace ManikinApp
         internal static readonly string SupabaseUrl;
         internal static readonly string SupabaseKey;
 
+        // Gzipped mirror of the same rows, refreshed daily by catalog-snapshot/
+        // (see README). Read before Supabase: raw.githubusercontent.com costs
+        // the project no egress and still answers while a free project is paused.
+        internal static readonly string SnapshotUrl;
+
         // HTTP client for Supabase API calls; null when no credentials exist.
         static readonly HttpClient SupabaseClient;
 
         static Wardrobe()
         {
-            string url, key;
-            Config.Read(out url, out key);
+            string url, key, snapshot;
+            Config.Read(out url, out key, out snapshot);
             SupabaseUrl = url;
             SupabaseKey = key;
+            SnapshotUrl = snapshot;
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(key))
             {
                 AppForm.Dbg("wardrobe: no Supabase credentials; using the local JSON catalog");
@@ -53,11 +62,16 @@ namespace ManikinApp
             // the swfs table is SELECT-only for the anon role (see README).
             const string DefaultUrl = "https://zcuywyfxqvrmrmeivmcn.supabase.co/rest/v1/swfs";
             const string DefaultKey = "sb_publishable_LaucQb2EgiRwu0q9_j8G9A_4abfiHXY";
+            // Catalog mirror: the same rows, gzipped, refreshed daily by the
+            // Manikin-Catalog repo (catalog-snapshot/). One ~1.6 MB GET replaces
+            // the 51-page walk below and spends no Supabase egress.
+            const string DefaultSnapshot = "https://raw.githubusercontent.com/clownass-op/Manikin-Catalog/main/catalog.json.gz";
 
-            public static void Read(out string url, out string key)
+            public static void Read(out string url, out string key, out string snapshot)
             {
                 url = Env("MANIKIN_SUPABASE_URL");
                 key = Env("MANIKIN_SUPABASE_KEY");
+                snapshot = Env("MANIKIN_CATALOG_URL");
                 string exe = AppDomain.CurrentDomain.BaseDirectory;
                 string root = null;
                 try { root = Path.GetDirectoryName(exe.TrimEnd(Path.DirectorySeparatorChar)); } catch { }
@@ -86,6 +100,7 @@ namespace ManikinApp
                 // Nothing overrode it: fall back to the built-in catalog.
                 if (string.IsNullOrEmpty(url)) url = DefaultUrl;
                 if (string.IsNullOrEmpty(key)) key = DefaultKey;
+                if (string.IsNullOrEmpty(snapshot)) snapshot = DefaultSnapshot;
             }
 
             static string Env(string name)
@@ -114,7 +129,66 @@ namespace ManikinApp
 
         public static void Preload()
         {
-            if (_load == null) _load = Task.Run(() => LoadFromSupabase());
+            if (_load == null) _load = Task.Run(() => LoadCatalog());
+        }
+
+        // Snapshot first, PostgREST second. The mirror is the normal path now:
+        // one request for every row instead of 51 pages, and no project egress.
+        // The local wardrobe.json backup is deliberately gone: it could serve a
+        // stale catalog after the mirror moved on, and hid outage symptoms.
+        static async Task<List<Item>> LoadCatalog()
+        {
+            List<Item> snapshot = LoadFromSnapshot();
+            if (snapshot != null) return snapshot;
+            return await LoadFromSupabase();
+        }
+
+        // The whole catalog in one gzipped GET. null = mirror unavailable or
+        // unusable, so the caller keeps going down the PostgREST path.
+        static List<Item> LoadFromSnapshot()
+        {
+            if (string.IsNullOrEmpty(SnapshotUrl)) return null;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) })
+                using (var resp = http.GetAsync(SnapshotUrl).GetAwaiter().GetResult())
+                {
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        AppForm.Dbg("wardrobe: snapshot answered " + (int)resp.StatusCode + ", using Supabase");
+                        return null;
+                    }
+                    using (var raw = resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+                    using (var gz = new GZipStream(raw, CompressionMode.Decompress))
+                    using (var text = new StreamReader(gz, Encoding.UTF8))
+                    {
+                        var rows = JArray.Parse(text.ReadToEnd());
+                        var list = new List<Item>(rows.Count);
+                        foreach (JToken r in rows)
+                        {
+                            try { AddRow(list, r); }
+                            catch { }
+                        }
+                        list = Slim(list);
+                        // A truncated publish must not empty the wardrobe: under
+                        // 1000 items is treated as "mirror broken, use Supabase".
+                        if (list.Count < 1000)
+                        {
+                            AppForm.Dbg("wardrobe: snapshot held only " + list.Count + " items, using Supabase");
+                            return null;
+                        }
+                        AppForm.Dbg("wardrobe: " + list.Count + " items from the GitHub catalog snapshot in " +
+                            sw.ElapsedMilliseconds + " ms");
+                        return list;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppForm.Dbg("wardrobe: snapshot failed (" + ex.Message + "), using Supabase");
+                return null;
+            }
         }
 
         // Load items from Supabase database
@@ -128,7 +202,7 @@ namespace ManikinApp
             var list = new List<Item>();
             try
             {
-                if (SupabaseClient == null) return LoadFromJsonFallback();
+                if (SupabaseClient == null) return new List<Item>();
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 const int pageSize = 1000;
                 const int maxParallel = 8;
@@ -137,8 +211,8 @@ namespace ManikinApp
                 JArray rows = ParseRows(first, 0);
                 if (rows == null || rows.Count == 0)
                 {
-                    AppForm.Dbg("Supabase: first page empty/error, falling back to JSON");
-                    return LoadFromJsonFallback();
+                    AppForm.Dbg("Supabase: first page empty/error, no catalog");
+                    return new List<Item>();
                 }
                 foreach (JToken r in rows)
                 {
@@ -183,30 +257,11 @@ namespace ManikinApp
 
                 if (list.Count == 0)
                 {
-                    AppForm.Dbg("Supabase: no rows loaded, falling back to JSON");
-                    return LoadFromJsonFallback();
+                    AppForm.Dbg("Supabase: no rows loaded, no catalog");
+                    return new List<Item>();
                 }
 
-                // Drop duplicate slot+path rows (the DB repeats some items e.g.
-                // "Legion DoomKnight" as Armor and Class); rows with real meta win.
-                var seen = new Dictionary<string, Item>();
-                var slim = new List<Item>(list.Count);
-                foreach (var it in list)
-                {
-                    string key = it.Slot + "\t" + it.File.ToLowerInvariant();
-                    Item old;
-                    if (!seen.TryGetValue(key, out old)) { seen[key] = it; slim.Add(it); }
-                    else if (old.Rarity == "(no rarity)" && it.Rarity != "(no rarity)")
-                    {
-                        int i = slim.IndexOf(old);
-                        if (i >= 0) slim[i] = it;
-                        seen[key] = it;
-                    }
-                }
-                list = slim;
-
-                // A-Z by name, matching the old pre-sorted JSON catalog.
-                list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+                list = Slim(list);
 
                 var counts = new Dictionary<string, int>();
                 foreach (var it in list)
@@ -223,7 +278,7 @@ namespace ManikinApp
             catch (Exception ex)
             {
                 AppForm.Dbg("Supabase wardrobe load error: " + ex.Message);
-                return LoadFromJsonFallback();
+                return new List<Item>();
             }
         }
 
@@ -266,55 +321,12 @@ namespace ManikinApp
             return body;
         }
 
-        // Just the path column, paged the same way. CatalogSync only needs the
-        // join key, and pulling name/link/meta for 51k rows costs several times
-        // the bytes for data the diff throws away (that load took ~20 s).
+        // The join key for CatalogSync. The catalog now arrives in one piece
+        // from the mirror, so the loaded list already is the answer: the old
+        // paged path-only walk against PostgREST cost ~20 s for the same set.
         internal static HashSet<string> AllPaths()
         {
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
-                if (SupabaseClient == null) return ExistingFiles();
-                const int pageSize = 1000;
-                const int maxParallel = 8;
-                JArray first = ParseRows(FetchPage(0, pageSize, "path").GetAwaiter().GetResult(), 0);
-                if (first == null || first.Count == 0) return ExistingFiles();
-                AddPaths(set, first);
-
-                int total = Math.Max(lastTotal, set.Count);
-                var offsets = new List<long>();
-                for (long off = pageSize; off < total; off += pageSize) offsets.Add(off);
-
-                for (int start = 0; start < offsets.Count; start += maxParallel)
-                {
-                    var tasks = new List<Task<JArray>>();
-                    for (int i = start; i < offsets.Count && i < start + maxParallel; i++)
-                    {
-                        long off = offsets[i];
-                        tasks.Add(Task.Run(() => ParseRows(FetchPage(off, pageSize, "path").GetAwaiter().GetResult(), off)));
-                    }
-                    foreach (JArray page in Task.WhenAll(tasks).GetAwaiter().GetResult())
-                        if (page != null) AddPaths(set, page);
-                }
-                AppForm.Dbg("catalog diff: " + set.Count + " paths from Supabase");
-            }
-            catch (Exception ex)
-            {
-                // Never let the fast path cost the sync: fall back to the rows
-                // the wardrobe already has in memory.
-                AppForm.Dbg("catalog diff: path fetch failed (" + ex.Message + "), using the loaded catalog");
-                return ExistingFiles();
-            }
-            return set;
-        }
-
-        static void AddPaths(HashSet<string> set, JArray rows)
-        {
-            foreach (JToken r in rows)
-            {
-                string p = TrimOr((string)r["path"]);
-                if (p.Length > 0) set.Add(p.Replace('\\', '/').ToLowerInvariant());
-            }
+            return ExistingFiles();
         }
 
         // Page body -> row array; tolerates a wrapped { "rows": [ ... ] } and
@@ -408,8 +420,66 @@ namespace ManikinApp
                 WeaponType = itemGroup.Equals("Weapon", StringComparison.OrdinalIgnoreCase) ? category : "",
                 Member = member, Ac = ac, Rarity = rarity, Where = where, State = state
             };
-            it.Haystack = Fold(it.Name + "\n" + string.Join("|", alts) + "\n" + it.File);
+            Reindex(it);
             list.Add(it);
+        }
+
+        // Deduplicate slot+path rows (the DB repeats some items, e.g. "Legion
+        // DoomKnight" as Armor and Class; rows with real meta win) and sort A-Z
+        // by name. Shared by the snapshot and PostgREST paths.
+        // Rows that share a SWF but carry different names are not dropped: the
+        // name joins the kept item's Alts, so every name aqcloset lists the art
+        // under finds the one item.
+        static List<Item> Slim(List<Item> list)
+        {
+            var seen = new Dictionary<string, Item>();
+            var slim = new List<Item>(list.Count);
+            foreach (var it in list)
+            {
+                string key = it.Slot + "\t" + it.File.ToLowerInvariant();
+                Item old;
+                if (!seen.TryGetValue(key, out old)) { seen[key] = it; slim.Add(it); continue; }
+
+                // Same slot, same SWF, another name: aqcloset lists one file once
+                // per name it has for the art ("Vaza's Custom Set Sign", "Skyper's
+                // ..."), so keep the name as an alternate instead of losing it.
+                if (old.Rarity == "(no rarity)" && it.Rarity != "(no rarity)")
+                {
+                    // The row with meta takes the slot but inherits every name.
+                    string[] carried = old.Alts;
+                    string carriedName = old.Name;
+                    int i = slim.IndexOf(old);
+                    if (i >= 0) slim[i] = it;
+                    seen[key] = it;
+                    AddAlt(it, carriedName);
+                    foreach (var a in carried) AddAlt(it, a);
+                    continue;
+                }
+                AddAlt(old, it.Name);
+                foreach (var a in it.Alts) AddAlt(old, a);
+            }
+            slim.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            return slim;
+        }
+
+        // One more name for the same art. Folded-equal names are skipped, so
+        // "Gan's" and "Gan\u2019s" stay one entry, and the haystack is rebuilt
+        // so the new name is findable straight away.
+        static void AddAlt(Item it, string name)
+        {
+            if (it == null || string.IsNullOrEmpty(name)) return;
+            string key = Fold(name);
+            if (key.Length == 0 || key == Fold(it.Name)) return;
+            foreach (var a in it.Alts) if (Fold(a) == key) return;
+            var alts = new List<string>(it.Alts);
+            alts.Add(name.Trim());
+            it.Alts = alts.ToArray();
+            Reindex(it);
+        }
+
+        static void Reindex(Item it)
+        {
+            it.Haystack = Fold(it.Name + "\n" + string.Join("|", it.Alts) + "\n" + it.File);
         }
 
         // Slot names MUST be the lowercase catalog slots, which is exactly what
@@ -447,7 +517,7 @@ namespace ManikinApp
         // search for "gan's" matched nothing. Fold quotes to one form and drop
         // apostrophes entirely: "gan's", "gan\u2019s" and "gans" all hit the
         // same item, and the same folding runs over both sides of the compare.
-        static string Fold(string s)
+        internal static string Fold(string s)
         {
             if (string.IsNullOrEmpty(s)) return "";
             return s.ToLowerInvariant()
@@ -465,62 +535,6 @@ namespace ManikinApp
         }
 
         static string TrimOr(string s) { return s == null ? "" : s.Trim(); }
-
-        // Load items from local JSON (fallback) - with proper path handling
-        static List<Item> LoadFromJsonFallback()
-        {
-            // Try multiple possible locations for the wardrobe.json
-            string[] possiblePaths = new[]
-            {
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "catalog", "wardrobe.json"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bin", "catalog", "wardrobe.json"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wardrobe.json"),
-            };
-
-            foreach (string path in possiblePaths)
-            {
-                try
-                {
-                    if (File.Exists(path))
-                    {
-                        AppForm.Dbg("wardrobe: loading from " + path);
-                        return LoadFromJson(path);
-                    }
-                }
-                catch { continue; }
-            }
-
-            // No JSON found - return empty list, Query() will show error
-            AppForm.Dbg("wardrobe: no JSON fallback found, returning empty list");
-            return new List<Item>();
-        }
-
-        // Load items from local JSON
-        static List<Item> LoadFromJson(string path)
-        {
-            var list = new List<Item>();
-            try
-            {
-                var rows = (JArray)JObject.Parse(File.ReadAllText(path))["rows"];
-                foreach (JArray r in rows)
-                {
-                    string alts = (string)r[3];
-                    var it = new Item
-                    {
-                        Slot = (string)r[0], File = (string)r[1], Name = (string)r[2],
-                        Alts = string.IsNullOrEmpty(alts) ? new string[0] : alts.Split('|'),
-                        Link = (string)r[4], WeaponType = (string)r[5],
-                        Member = ((int)r[6] & 1) != 0, Ac = ((int)r[6] & 2) != 0,
-                        Rarity = (string)r[7], Where = (string)r[8]
-                    };
-                    it.Haystack = Fold(it.Name + "\n" + alts + "\n" + it.File);
-                    list.Add(it);
-                }
-                AppForm.Dbg("wardrobe: " + list.Count + " items from local JSON");
-            }
-            catch (Exception ex) { AppForm.Dbg("wardrobe JSON load failed (" + path + "): " + ex.Message); }
-            return list;
-        }
 
         static List<Item> Items
         {
@@ -563,9 +577,9 @@ namespace ManikinApp
             // full catalog is 50k+ rows); the page retries a "loading" answer.
             Preload();
             if (!_load.IsCompleted)
-                return JsonConvert.SerializeObject(new { ok = false, loading = true, error = "Loading catalog from Supabase…" });
+                return JsonConvert.SerializeObject(new { ok = false, loading = true, error = "Loading catalog…" });
             if (Items.Count == 0)
-                return JsonConvert.SerializeObject(new { ok = false, error = "No catalog: unable to load from Supabase or JSON." });
+                return JsonConvert.SerializeObject(new { ok = false, error = "No catalog: the GitHub snapshot and Supabase both failed." });
             var words = Fold(q).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             int total = 0, inSlot = 0;
             var outRows = new JArray();

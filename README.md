@@ -46,12 +46,19 @@ The exe lands in `bin\Manikin.exe`.
 
 ## Wardrobe catalog
 
-The item catalog is read from Supabase with the publishable key compiled into
+The item catalog loads from the GitHub mirror first
+(`https://raw.githubusercontent.com/clownass-op/Manikin-Catalog/main/catalog.json.gz`,
+refreshed daily by a scheduled snapshot job), then from Supabase, then from the
+local Supabase. `MANIKIN_CATALOG_URL` overrides the mirror URL. The mirror is the
+normal path now: one ~1.6 MB gzipped request instead of 51 PostgREST pages, and
+no Supabase egress.
+
+The catalog otherwise uses Supabase with the publishable key compiled into
 `Wardrobe.cs` (`Config.DefaultUrl` / `Config.DefaultKey`), so a clone needs no
 key file. `MANIKIN_SUPABASE_URL` and `MANIKIN_SUPABASE_KEY` override it, as does
 an optional `supabase.key` next to the exe (git-ignored, see
-`supabase.key.example`). `catalog\wardrobe.json` is used as an offline fallback
-when present.
+`supabase.key.example`). The old `catalog\wardrobe.json` backup is no longer
+read: the mirror replaced it, and a stale local copy hid real outages.
 
 A publishable key is **not** a read-only key: what it is allowed to do is decided
 by grants and row level security on the table. Keep `swfs` read-only for the
@@ -66,17 +73,35 @@ create policy swfs_read_only on public.swfs
   for select to anon, authenticated using (true);
 ```
 
+## Catalog mirror
+
+The catalog mirror lives in its own repo (`clownass-op/Manikin-Catalog`), built
+by a small exporter kept out of this one: it dumps the `swfs` table to a single
+gzipped file on a daily GitHub Actions schedule, so the catalog can be read from
+`raw.githubusercontent.com` instead of spending Supabase egress. `Wardrobe`
+reads it before PostgREST, so the mirror is what the app normally uses.
+
 ## CharPage loader store
 
 Loading a character by name used to download its gear SWFs into the folder next
-to the exe. They now live in Supabase instead, in the `char_swfs` table (path,
-name, linkage, bytes, size): the loader reads a row first and only a miss fetches
-from the game CDN (storing name and linkage with it). The bytes go straight to
-the Flash player, so a character load writes nothing to the device.
+to the exe. They now live in the GitHub catalog repo under `swfs/<path>`, one
+file per CDN path: the loader reads `raw.githubusercontent.com` first and only a
+miss fetches from the game CDN. The bytes go straight to the Flash player, so a
+character load writes nothing to the device.
 
-Run `tools/char_swfs.sql` once in the Supabase SQL editor to create the table and
-its policies. Without it the loader still works - it re-fetches from the CDN each
-time and logs that the store is missing.
+Saving them needs a token - `MANIKIN_GITHUB_TOKEN`, or a `github.key` next to the
+exe (git-ignored, see `github.key.example`). It is deliberately not compiled in:
+a published exe must stay read-only, or anyone could push to the repo every copy
+downloads from. Without a token, saves fall back to the Supabase `char_swfs`
+table (`tools/char_swfs.sql`), which is still read as a second-chance cache.
+
+## Catalog sync
+
+Settings > Catalog diffs aqcloset.com against what we already have. With a token
+it appends the missing items to `catalog.json.gz` in the same repo (one commit
+per sync, plus one that refreshes the row count and sha256 in
+`catalog.meta.json`); without one it inserts them into the Supabase `swfs` table.
+The nightly snapshot unions both stores, so items added either way survive.
 
 ## Disclaimer
 

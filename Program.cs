@@ -24,6 +24,13 @@ namespace ManikinApp
         [STAThread]
         static int Main(string[] args)
         {
+            // Which store saves go to, logged once at startup so a token that
+            // is missing or expired is visible in the log, not just as saves
+            // quietly landing in Supabase.
+            Log("github store: " + (GitHub.Writable
+                ? "writable, saves go to " + GitHub.Owner + "/" + GitHub.Repo
+                : "read-only (no github.key), saves fall back to Supabase"));
+
             // Offscreen render regression suite: no dialogs, exit code = result.
             if (HeadlessRunner.Requested(args))
             {
