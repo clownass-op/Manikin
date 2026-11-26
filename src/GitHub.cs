@@ -73,6 +73,19 @@ namespace ManikinApp
             catch { return null; }
         }
 
+        // Does a folder exist in the mirror? One call answers it for every path
+        // underneath, so a store that was never populated costs a single probe
+        // per session instead of a 404 on every item.
+        public static bool FolderExists(string repoPath)
+        {
+            try
+            {
+                using (var resp = Http.GetAsync(ApiUrl(repoPath) + "?ref=" + Branch).GetAwaiter().GetResult())
+                    return resp.IsSuccessStatusCode;
+            }
+            catch { return false; }
+        }
+
         // Contents API read. sha is what an update has to send back, and getting
         // both in one call saves a round trip before a rewrite.
         public static byte[] GetFile(string repoPath, out string sha, out string error)

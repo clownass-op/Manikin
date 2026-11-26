@@ -48,6 +48,12 @@ namespace ManikinApp
         // Read by the page while a job runs, so it can show progress.
         static volatile string _phase = "";
         static volatile int _done, _total, _missing;
+        // Scan progress in pages, not items. Four pages are in flight at once
+        // and each answers with anything from 0 to 200 rows, so an item counter
+        // sits on the same figure for a second at a time and reads as if the
+        // walk had stopped. Pages move one at a time and end exactly at the
+        // last page.
+        static volatile int _pageDone, _pageTotal;
 
         // Last items added, newest last. The Monitor panel renders these, so a
         // scan does not have to be watched in the Log tab.
@@ -94,7 +100,7 @@ namespace ManikinApp
         {
             string[] recent;
             lock (_recent) recent = _recent.ToArray();
-            return JsonConvert.SerializeObject(new { phase = _phase, done = _done, total = _total, missing = _missing, recent });
+            return JsonConvert.SerializeObject(new { phase = _phase, done = _done, total = _total, missing = _missing, page = _pageDone, pages = _pageTotal, recent });
         }
 
         static string Fail(string message)
@@ -109,6 +115,7 @@ namespace ManikinApp
             try
             {
                 _phase = "Loading our catalog"; _done = 0; _total = 0; _missing = 0;
+                _pageDone = 0; _pageTotal = 0;
                 lock (_recent) _recent.Clear();
                 // Paths only: the diff never looks at names, so there is no
                 // reason to pull the whole catalog to compare against.
@@ -119,13 +126,14 @@ namespace ManikinApp
                 PageResult first = FetchPage(0);
                 int total = first.Total > 0 ? first.Total : first.Items.Count;
                 _total = total;
+                _pageTotal = (total + PageSize - 1) / PageSize;
 
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var missing = new List<Remote>();
                 var counters = new int[3];        // repeats, already held, junk
                 var planGate = new object();
 
-                Action<PageResult> take = page =>
+                Action<PageResult, int> take = (page, offset) =>
                 {
                     int rep = 0, hld = 0, jnk = 0;
                     var mine = new List<Remote>(page.Items.Count);
@@ -142,19 +150,31 @@ namespace ManikinApp
                     }
                     lock (planGate)
                     {
+                        // A page past the reported total means the API's total
+                        // lags its own rows (it said 68346 while the list held
+                        // 68355). Grow the target so the bar still ends exactly
+                        // on the last item instead of stopping short.
+                        if (offset >= total && page.Items.Count > 0)
+                        {
+                            total += page.Items.Count;
+                            _total = total;
+                            _pageTotal = (total + PageSize - 1) / PageSize;
+                        }
+                        _pageDone++;
                         counters[0] += rep; counters[1] += hld; counters[2] += jnk;
                         missing.AddRange(mine);
                         _done = Math.Min(_done + page.Items.Count, total);
                         _missing = missing.Count;
                     }
                 };
-                take(first);
+                take(first, 0);
 
                 // Pages 1..n run on Workers tasks, each one waiting its turn for
                 // a request slot rather than sleeping after a whole round trip.
                 var offsets = new List<int>();
                 for (int off = PageSize; off < total; off += PageSize) offsets.Add(off);
                 int nextPage = 0;
+                var missed = new List<int>();
                 var jobs = new Task[Workers];
                 for (int w = 0; w < Workers; w++)
                 {
@@ -164,24 +184,60 @@ namespace ManikinApp
                         {
                             int i = Interlocked.Increment(ref nextPage) - 1;
                             if (i >= offsets.Count) break;
+                            int off = offsets[i];
                             WaitSlot();
-                            PageResult page;
-                            try { page = FetchPage(offsets[i]); }
-                            catch (Exception ex)
-                            {
-                                AppForm.Dbg("catalog scan page " + offsets[i] + " failed: " + ex.Message);
-                                continue;
-                            }
-                            take(page);
+                            PageResult page = ReadPage(off);
+                            if (page == null) { lock (planGate) missed.Add(off); continue; }
+                            take(page, off);
                         }
                     });
                 }
                 Task.WaitAll(jobs);
 
+                // A page that never answered is not an item we hold: retry each
+                // missed offset so one bad connection cannot leave a hole in the
+                // diff. Anything still unanswered is reported, never hidden.
+                for (int round = 0; round < 2 && missed.Count > 0; round++)
+                {
+                    var again = new List<int>();
+                    foreach (int off in missed)
+                    {
+                        WaitSlot();
+                        PageResult page = ReadPage(off);
+                        if (page == null) again.Add(off);
+                        else take(page, off);
+                    }
+                    lock (planGate) { missed.Clear(); missed.AddRange(again); }
+                }
+                int pagesFailed = missed.Count;
+
+                // Read the first offset past the reported total until a page
+                // comes back empty. The API's `total` lags its row count, so
+                // without this the tail rows are never scanned at all.
+                int tail = total;
+                for (int guard = 0; guard < 10; guard++)
+                {
+                    WaitSlot();
+                    PageResult page = ReadPage(tail);
+                    if (page == null) { pagesFailed++; break; }
+                    if (page.Items.Count == 0) break;
+                    take(page, tail);
+                    if (page.Items.Count < PageSize) break;
+                    tail += PageSize;
+                }
+                if (pagesFailed > 0)
+                    AppForm.Dbg("catalog scan: " + pagesFailed + " page(s) never answered - the diff may be short");
+
                 int repeat = counters[0], held = counters[1], junk = counters[2];
+                int pages = (total + PageSize - 1) / PageSize;
+                // One line that says the whole list was read, so the Log tab can
+                // answer "did it get everything" without counting frames.
+                AppForm.Dbg("catalog scan: read " + pages + " pages, " + total + " items - missing " + missing.Count +
+                            ", already have " + held + ", repeats " + repeat + ", junk " + junk +
+                            (pagesFailed > 0 ? ", " + pagesFailed + " page(s) failed" : ""));
 
                 lock (_gate) _plan = missing;
-                _phase = "Scan complete";
+                _phase = pagesFailed == 0 ? "Scan complete" : "Scan incomplete";
                 // Lower-case keys: the page reads name/file/slot, matching the API.
                 var sample = missing.Take(300).Select(m => new JObject
                 {
@@ -191,6 +247,8 @@ namespace ManikinApp
                 {
                     ok = true,
                     remote = total,
+                    pages,
+                    pagesFailed,
                     ours = have.Count,
                     missing = missing.Count,
                     alreadyHave = held,
@@ -219,6 +277,7 @@ namespace ManikinApp
             // since the scan (a second click, another machine), and the plan
             // itself can hold the same path twice.
             _phase = "Checking for duplicates"; _done = 0; _total = plan.Count;
+            _pageDone = 0; _pageTotal = 0;   // item counts from here on
             int plannedBefore = plan.Count;
             try
             {
@@ -248,6 +307,7 @@ namespace ManikinApp
 
             _phase = "Adding items"; _done = 0; _total = plan.Count;
             int added = 0, failed = 0, already = 0;
+            var addedRows = new JArray();
             string lastError = "";
             AppForm.Dbg("catalog sync: adding " + plan.Count + " items (" + skipped + " duplicates skipped)");
             try
@@ -279,6 +339,7 @@ namespace ManikinApp
                         if (landed.Contains(r.File))
                         {
                             added++;
+                            addedRows.Add(Row(r));
                             lines.Add("catalog sync: added " + r.Name + " (" + r.File + ")");
                             Note("+ " + r.Name + "  (" + r.File + ")");
                         }
@@ -301,7 +362,7 @@ namespace ManikinApp
                             ", already there " + already + ", skipped " + skipped);
                 _phase = "Done";
                 lock (_gate) _plan.Clear();   // a second click re-scans instead of re-inserting
-                Wardrobe.Reload();            // pick the new rows up on the next query
+                Wardrobe.Merge(addedRows);    // pick the new rows up at once
                 return JsonConvert.SerializeObject(new
                 {
                     ok = failed == 0,
@@ -314,6 +375,42 @@ namespace ManikinApp
                 });
             }
             catch (Exception ex) { return Fail(ex.Message); }
+        }
+
+        // Field order of a mirror row. Every writer emits this order (new rows,
+        // rows read back from the file) so the printed catalog reads the same
+        // way on every line; snapshot.py holds the same list.
+        static readonly string[] RowKeys = { "name", "path", "category", "item_group", "link", "meta" };
+
+        static JObject Canonical(JToken t)
+        {
+            var src = t as JObject;
+            if (src == null) return null;
+            var row = new JObject();
+            foreach (string k in RowKeys)
+            {
+                JToken v = src[k];
+                if (v != null) row[k] = v;
+            }
+            // Anything we do not know about is kept, after the fixed fields:
+            // a row must never lose data because of formatting.
+            foreach (JProperty p in src.Properties())
+                if (Array.IndexOf(RowKeys, p.Name) < 0) row[p.Name] = p.Value;
+            return row;
+        }
+
+        // One planned item as a catalog row. Shared by both writers so a merged
+        // row and a stored row always carry the same fields.
+        static JObject Row(Remote r)
+        {
+            return new JObject
+            {
+                { "name", r.Name },
+                { "path", r.File },
+                { "category", r.Slot },
+                { "item_group", r.Wtype ?? "" },
+                { "link", r.Link ?? "" }
+            };
         }
 
         // Where Apply() writes: GitHub when a token is configured, else the old
@@ -348,18 +445,14 @@ namespace ManikinApp
             }
 
             int added = 0, already = 0;
+            var addedRows = new JArray();
             foreach (Remote r in plan)
             {
                 if (r == null || string.IsNullOrEmpty(r.File)) continue;
                 if (!have.Add(r.File)) { already++; continue; }
-                rows.Add(new JObject
-                {
-                    { "name", r.Name },
-                    { "path", r.File },
-                    { "category", r.Slot },
-                    { "item_group", r.Wtype ?? "" },
-                    { "link", r.Link ?? "" }
-                });
+                JObject row = Row(r);
+                rows.Add(row);
+                addedRows.Add(row);
                 added++;
                 _done = added;
                 if (added % 250 == 0) AppForm.Dbg("catalog sync: " + added + " new items staged");
@@ -378,9 +471,15 @@ namespace ManikinApp
 
             var sorted = new JArray();
             foreach (JToken t in rows.OrderBy(r => (string)r["path"] ?? "", StringComparer.Ordinal))
-                sorted.Add(t);
+            {
+                JObject row = Canonical(t);
+                if (row != null) sorted.Add(row);
+            }
 
-            byte[] raw = Encoding.UTF8.GetBytes(sorted.ToString(Formatting.None));
+            // Indented, one field per line, LF: the mirror is the one file people
+            // read by hand and diff, and pretty-printing costs ~40 KB gzipped.
+            // snapshot.py writes the same bytes, so a nightly refresh stays quiet.
+            byte[] raw = Encoding.UTF8.GetBytes(sorted.ToString(Formatting.Indented).Replace("\r\n", "\n") + "\n");
             byte[] gzBytes;
             using (var ms = new MemoryStream())
             {
@@ -397,7 +496,7 @@ namespace ManikinApp
 
             _phase = "Done";
             lock (_gate) _plan.Clear();
-            Wardrobe.Reload();
+            Wardrobe.Merge(addedRows);   // visible at once, no cached re-read
             AppForm.Dbg("catalog sync: added " + added + " items to GitHub (" + already + " already there)");
             return JsonConvert.SerializeObject(new
             {
@@ -502,6 +601,24 @@ namespace ManikinApp
         static bool IsDuplicate(string error)
         {
             return error != null && (error.Contains("23505") || error.Contains("duplicate key"));
+        }
+
+        // One page with a few retries behind it. A timeout or a dropped
+        // connection should cost a couple of seconds, not a slice of the
+        // catalogue the scan silently never sees.
+        static PageResult ReadPage(int offset)
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try { return FetchPage(offset); }
+                catch (Exception ex)
+                {
+                    AppForm.Dbg("catalog scan page " + offset + " attempt " + (attempt + 1) +
+                                " failed: " + ex.Message);
+                    if (attempt < 2) Thread.Sleep(500 * (attempt + 1));
+                }
+            }
+            return null;
         }
 
         static PageResult FetchPage(int offset)

@@ -261,31 +261,70 @@ namespace ManikinApp
                 var all = new JArray();
                 foreach (var r in results) if (r != null) all.Add(r);
                 AppForm.Dbg("charload: " + items.Count + " items - " + fromDb + " from the database, " +
-                    fetched + " fetched from the game CDN (" + stored + " stored), " + failed + " failed");
+                    fetched + " fetched from the game CDN (" + stored + " queued to store), " + failed + " failed");
                 return JsonConvert.SerializeObject(new { ok = failed == 0, items = all, dir = "" });
             }
             catch (Exception ex) { return JsonConvert.SerializeObject(new { ok = false, error = ex.Message }); }
         }
 
-        // One loader item: Supabase row first, and only a miss touches the game
-        // CDN (then gets stored on the way through). Either way the bytes go
-        // straight to the player - no intermediate file on this device.
+        // One loader item: the store and the game CDN are asked at the same time
+        // and whichever answers first wins. Asking the store first is what put a
+        // two-second gap between the names appearing and the avatar wearing them:
+        // the same six files arrive from the CDN in ~0.08 s and take ~1.4 s as
+        // PostgREST rows. The store is still what renders gear the CDN has
+        // dropped, because a failed CDN answer is not a win. Either way the bytes
+        // go straight to the player - no intermediate file on this device.
         static JObject ResolveItem(Downloads.ItemDownload it, ref int fromDb, ref int fetched, ref int stored)
         {
             string key = SwfStore.KeyOf(it.File);
-            byte[] bytes = SwfStore.Get(key);
-            if (bytes != null) fromDb++;
-            else
+            byte[] bytes = SwfStore.Cached(key);
+            if (bytes != null) { fromDb++; return ItemResult(it, key, bytes); }
+
+            var store = System.Threading.Tasks.Task.Run(() => SwfStore.Get(key));
+            var cdn = Downloads.FetchBytesAsync(it.Url);
+            bool fromCdn;
+            bytes = FirstBytes(cdn, store, out fromCdn);
+            if (bytes != null)
             {
-                bytes = Downloads.FetchBytesAsync(it.Url).GetAwaiter().GetResult();
-                if (bytes != null && bytes.Length > 4)
+                if (fromCdn)
                 {
                     fetched++;
-                    if (SwfStore.Put(key, bytes, it.Name, it.Link)) stored++;
+                    // Only when the store had nothing to offer: writing a path it
+                    // already holds would be a commit that changes no bytes.
+                    bool storeEmpty = false;
+                    try { storeEmpty = store.IsCompleted && store.Result == null; } catch { }
+                    if (storeEmpty) { SwfStore.PutLater(key, bytes, it.Name, it.Link); stored++; }
                 }
-                else bytes = null;
+                else fromDb++;
             }
             return ItemResult(it, key, bytes);
+        }
+
+        // Whichever task produced usable bytes first. An empty or failed answer
+        // is not a win, so a CDN that no longer serves the file falls through to
+        // the store read that is still in flight.
+        static byte[] FirstBytes(System.Threading.Tasks.Task<byte[]> first, System.Threading.Tasks.Task<byte[]> second, out bool firstWon)
+        {
+            firstWon = false;
+            var pending = new System.Collections.Generic.List<System.Threading.Tasks.Task<byte[]>> { first, second };
+            int until = Environment.TickCount + 60000;
+            while (pending.Count > 0)
+            {
+                int left = until - Environment.TickCount;
+                if (left <= 0) break;
+                var live = pending.ToArray();
+                int i = System.Threading.Tasks.Task.WaitAny(live, left);
+                if (i < 0) break;
+                var done = live[i];
+                pending.Remove(done);
+                try
+                {
+                    byte[] v = done.Result;
+                    if (v != null && v.Length > 4) { firstWon = ReferenceEquals(done, first); return v; }
+                }
+                catch { }
+            }
+            return null;
         }
 
         // Gender swap for a loader entry: armor is classes/<gender>/<file>, hair

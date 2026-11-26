@@ -558,6 +558,33 @@ namespace ManikinApp
             Preload();
         }
 
+        // Fold rows the app just wrote into the loaded catalog. Re-reading the
+        // mirror instead answers from raw.githubusercontent's five-minute cache
+        // (Cache-Control: max-age=300, and an extra query string does not miss
+        // it), so a row added a second ago would still be absent from the
+        // wardrobe search and the next scan would report it missing again.
+        internal static void Merge(JArray rows)
+        {
+            if (rows == null || rows.Count == 0) return;
+            Preload();
+            List<Item> current = null;
+            try { if (_load.IsCompleted) current = _load.Result; }
+            catch { current = null; }
+            // Nothing loaded yet: there is no list to append to, so pay the
+            // network round trip after all.
+            if (current == null || current.Count == 0) { Reload(); return; }
+            var list = new List<Item>(current.Count + rows.Count);
+            list.AddRange(current);
+            foreach (JToken r in rows)
+            {
+                try { AddRow(list, r); }
+                catch { }
+            }
+            // Slim dedupes by slot + path (a row we already held keeps its place)
+            // and sorts A-Z, so the list stays the one Query() walks.
+            _load = Task.FromResult(Slim(list));
+        }
+
         // One page (offset, limit) of the rows for a slot, filtered by access
         // ("all" | "free" | "member" | "ac"), by one rarity tier or the
         // "unobtainable" state, and by every word of q. Rows come pre-sorted

@@ -1159,29 +1159,39 @@ async function slotFlag(t, hide) {
 }
 async function showSlot(t) { await slotFlag(t, false); }
 async function clearSlot(t) { await slotFlag(t, true); delete __worn[t]; }
+// Last value pushed to the player per method. applyExtraState runs after every
+// character load, and each flashCall is a bridge round trip plus an avatar
+// redraw on the UI thread, so only send what actually changed since last time.
+// The player is never reloaded inside a session, so the cache stays valid.
+const __sent = {};
+async function flashOnce(key, method, value) {
+  if (__sent[key] === value) return;
+  __sent[key] = value;
+  await post('flashCall', { method, params: [value] });
+}
 async function applyExtraState() {
   sendBackground();
-  await post('flashCall', { method: 'loadResize', params: [String(project.scale / 100)] });
-  await post('flashCall', { method: 'loadResizePet', params: [String(project.petScale / 100)] });
-  await post('flashCall', { method: 'customBgSize', params: [String(project.bgScale / 100)] });
+  await flashOnce('scale', 'loadResize', String(project.scale / 100));
+  await flashOnce('petScale', 'loadResizePet', String(project.petScale / 100));
+  await flashOnce('bgScale', 'customBgSize', String(project.bgScale / 100));
   for (const id of Object.keys(colorMethods)) {
     const c = project.colors[id] || '#ffffff';
-    await post('flashCall', { method: colorMethods[id], params: [String(parseInt(c.slice(1), 16))] });
+    await flashOnce('color:' + id, colorMethods[id], String(parseInt(c.slice(1), 16)));
   }
-  await post('flashCall', { method: 'changeUserName', params: [project.nameText || ''] });
-  await post('flashCall', { method: 'showUserName', params: [project.nameShow && project.nameText && !project.hideUI ? 'True' : 'False'] });
-  await post('flashCall', { method: 'closeUii', params: ['False'] });
-  if (project.hideHelm) await post('flashCall', { method: 'hideHelm', params: ['True'] });
-  if (project.hideCape) await post('flashCall', { method: 'hideCape', params: ['True'] });
-  if (project.hidePet) await post('flashCall', { method: 'hidePet', params: ['True'] });
-  if (project.hideWeapon) await post('flashCall', { method: 'unarmed', params: ['True'] });
-  if (project.hideArmor) await post('flashCall', { method: 'hideArmor', params: ['True'] });
-  if (project.hideMisc) await post('flashCall', { method: 'hideMisc', params: ['True'] });
+  await flashOnce('name', 'changeUserName', project.nameText || '');
+  await flashOnce('showName', 'showUserName', project.nameShow && project.nameText && !project.hideUI ? 'True' : 'False');
+  await flashOnce('closeUii', 'closeUii', 'False');
+  if (project.hideHelm) await flashOnce('hideHelm', 'hideHelm', 'True');
+  if (project.hideCape) await flashOnce('hideCape', 'hideCape', 'True');
+  if (project.hidePet) await flashOnce('hidePet', 'hidePet', 'True');
+  if (project.hideWeapon) await flashOnce('hideWeapon', 'unarmed', 'True');
+  if (project.hideArmor) await flashOnce('hideArmor', 'hideArmor', 'True');
+  if (project.hideMisc) await flashOnce('hideMisc', 'hideMisc', 'True');
   // Only re-pin when the project asks for it. Sending an unconditional False
   // here would run right after the weapon load and undo the auto-detect that
   // just turned dual mode on for a split-set dagger.
-  if (project.daggerMode) await post('flashCall', { method: 'daggerMode', params: ['True'] });
-  await post('flashCall', { method: 'bgDrag', params: [project.bgDrag ? 'True' : 'False'] });
+  if (project.daggerMode) await flashOnce('daggerMode', 'daggerMode', 'True');
+  await flashOnce('bgDrag', 'bgDrag', project.bgDrag ? 'True' : 'False');
 }
 function updateUIVisibility() {
   renderGear();
@@ -1675,7 +1685,7 @@ async function applyVars(name, vars, dir) {
   ptext.textContent = dl.items.length + '/' + dl.items.length + ' complete';
   setStatus('Loaded ' + name + ': ' + (Object.keys(project.slots).length + Object.keys(project.cosmetics).length) + '/' + dl.items.length + ' items from the database.');
   setTimeout(() => prog.classList.remove('show'), 1500);
-  monitorEl.textContent = formatVars(vars) + '\n\nItem SWFs (Supabase char_swfs - nothing saved to this device):\n'
+  monitorEl.textContent = formatVars(vars) + '\n\nItem SWFs (game CDN, store fallback - nothing saved to this device):\n'
     + dl.items.map(it => (it.ok ? '[ok] ' : '[FAIL] ') + (it.cosmetic ? '(cos) ' : '') + it.type + '  ' + it.file).join('\n');
   updatePills();
   renderGear();
@@ -1691,17 +1701,12 @@ async function streamItems(name, vars, dir, pbar, ptext) {
   if (typeof __fb.charLoadPoll !== 'function') return post('downloadAll', { vars, dir });
   const id = await post('downloadAllStart', { vars, dir });
   if (!id || id.__postError) return post('downloadAll', { vars, dir });
-  // The player has to be up before the first SWF lands. It almost always is;
-  // on a cold start wait for it, then carry on either way (sendHost re-equips
-  // everything at the end, so a miss here is not fatal).
-  if (!__everLoaded) {
-    for (let i = 0; i < 30; i++) {
-      let v = null;
-      try { v = await post('flashQuery', { method: 'isReady' }); } catch (e) {}
-      if (v === '1') break;
-      await new Promise(r => setTimeout(r, 150));
-    }
-    if (project.gender) { try { await post('flashCall', { method: 'setGender', params: [project.gender] }); } catch (e) {} }
+  // No waiting for isReady: the player answers item loads about a second before
+  // it reports ready (body still loading), and this loop was a full second of
+  // dead time on the first load of a session. Gender has to go in first, since
+  // armor art is classes/<gender>/.
+  if (project.gender && !__everLoaded) {
+    try { await post('flashCall', { method: 'setGender', params: [project.gender] }); } catch (e) {}
   }
   const items = [];
   for (;;) {
@@ -1717,6 +1722,9 @@ async function streamItems(name, vars, dir, pbar, ptext) {
         if (!it.ok || it.cosmetic || !it.b64) continue;
         const entry = { file: it.file, path: it.path || '', b64: it.b64, link: it.link || '', enabled: true };
         project.slots[it.type] = entry;
+        // Already on the player (loading this character a second time): pushing
+        // the SWF through Flash again is the whole cost of the load, so skip it.
+        if (__worn[it.type] === wornKey(entry)) continue;
         try { await showSlot(it.type); await postSlot(it.type, entry); } catch (e) {}
       }
       const n = items.filter(x => x.ok).length;
@@ -2115,7 +2123,14 @@ if (catBtn) catBtn.onclick = async () => {
   const tick = setInterval(async () => {
     try {
       const p = JSON.parse(await post('catalogSyncProgress') || '{}');
-      if (p && p.phase) catInfo.textContent = p.phase + ' ' + p.done + (p.total ? '/' + p.total : '') + (p.missing ? ' - ' + p.missing + ' missing' : '');
+      // Pages while scanning: the item counter jumped 200 at a time and sat
+      // still between answers, which read as a stuck scan.
+      if (p && p.phase) {
+        const n = p.pages
+          ? p.page + '/' + p.pages + ' pages \u00b7 ' + p.done + '/' + p.total + ' items'
+          : p.done + (p.total ? '/' + p.total : '');
+        catInfo.textContent = p.phase + ' ' + n + (p.missing ? ' - ' + p.missing + ' missing' : '');
+      }
       catFeed(p);
     } catch (e) {}
   }, 700);
@@ -2129,7 +2144,8 @@ if (catBtn) catBtn.onclick = async () => {
     return;
   }
   if (!plan.missing) {
-    catInfo.textContent = 'Up to date: all ' + plan.remote + ' items from aqcloset.com are already in the database.';
+    catInfo.textContent = 'Up to date: all ' + plan.remote + ' items from aqcloset.com are already in the database.'
+      + (plan.pagesFailed ? ' (' + plan.pagesFailed + ' page(s) unreadable - rescan to be sure)' : '');
     monRestore();
     catBusy(false);
     return;
@@ -2137,13 +2153,18 @@ if (catBtn) catBtn.onclick = async () => {
   // The whole list goes in the monitor box itself; the confirm below stays one
   // short line so it can never push the box out of the panel.
   const list = (plan.sample || []).map(s => (s.name || s.Name) + '  (' + (s.file || s.File) + ')');
+  // A page the API never answered is a slice we did not read, so say it out
+  // loud instead of presenting the diff as complete.
+  const pagesLeft = plan.pagesFailed || 0;
+  const warn = pagesLeft ? '\n' + pagesLeft + ' page' + (pagesLeft === 1 ? '' : 's') + ' could not be read - run the scan again to cover them.' : '';
   if (monBox) {
     monBox.textContent = 'aqcloset.com lists ' + plan.remote + ' items.\n' + plan.missing + ' of them are not in the database:\n\n'
-      + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '');
+      + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '') + warn;
     monBox.scrollTop = 0;
   }
   const where = (plan.target || 'supabase') === 'github' ? 'GitHub' : 'Supabase';
-  const go = await catAsk('Add ' + plan.missing + ' missing items to ' + where + '?');
+  const go = await catAsk('Add ' + plan.missing + ' missing items to ' + where + '?'
+    + (pagesLeft ? ' (' + pagesLeft + ' page' + (pagesLeft === 1 ? '' : 's') + ' unreadable)' : ''));
   if (!go) {
     // Keep the list on screen: cancelled is exactly when you want to read it.
     catInfo.textContent = 'Cancelled - ' + plan.missing + ' items were not added.';

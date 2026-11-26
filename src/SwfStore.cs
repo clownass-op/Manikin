@@ -55,6 +55,19 @@ namespace ManikinApp
             return (rel ?? "").Replace('\\', '/').Trim().TrimStart('/').ToLowerInvariant();
         }
 
+        // This session's copy only, no network. A caller that already has a
+        // faster source wants to know whether the bytes are in hand before it
+        // asks anyone.
+        public static byte[] Cached(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            lock (_gate)
+            {
+                byte[] hit;
+                return _mem.TryGetValue(key, out hit) ? hit : null;
+            }
+        }
+
         // This session's copy, else the GitHub file, else one table row.
         // null = not stored anywhere.
         public static byte[] Get(string key)
