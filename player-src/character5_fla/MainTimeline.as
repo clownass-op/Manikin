@@ -122,6 +122,10 @@ package character5_fla
       public var myLoader:Loader;
       
       public var player:MovieClip;
+
+      // Stand-in for the game's World. The char page never needed one; ground
+      // items do (see buildWorld).
+      public var world:MovieClip;
       
       public var bg:MovieClip;
       
@@ -149,6 +153,55 @@ package character5_fla
       {
          super();
          addFrameScript(0,this.frame1,11,this.frame12);
+         this.world = this.buildWorld();
+      }
+
+      // The rig and some items expect root.world the way the live game has it.
+      // "I can see you.." (items/grounds/PlayerDummy.swf) reaches straight for
+      // world.copyAvatarMC, and with no world that call threw and the item
+      // never drew its copy. A MovieClip rather than a plain Object because
+      // the rig adds projectiles to the world. Everything else here is what
+      // the rig reaches for on paths this player already guards, answered
+      // harmlessly instead of as a null reference.
+      private function buildWorld() : MovieClip
+      {
+         var w:MovieClip = new MovieClip();
+         var self:MainTimeline = this;
+         w.combatAnims = ["Attack1","Attack2","Attack3","Attack4","Hit","Knockout","Getup","Stab","Thrash","Castgood","Cast1","Cast2","Cast3","Sword/ShieldFight","Sword/ShieldAttack1","Sword/ShieldAttack2","ShieldBlock","DuelWield/DaggerFight","DuelWield/DaggerAttack1","DuelWield/DaggerAttack2","FistweaponFight","FistweaponAttack1","FistweaponAttack2","PolearmFight","PolearmAttack1","PolearmAttack2","RangedFight","RangedAttack1","RangedAttack2","RangedAttack3","UnarmedFight","UnarmedAttack1","UnarmedAttack2","UnarmedAttack3","KickAttack","FlipAttack","Dodge","WhipAttack","GunAttack","GunAttack2","GunAttack3","RifleAttack","RifleAttack2","RifleFight","Card"];
+         w.rootClass = this;
+         w.getClass = function(param1:String) : Class
+         {
+            return null;
+         };
+         w.getAutoAttack = function() : String
+         {
+            return "";
+         };
+         w.testAction = function(param1:* = null) : void
+         {
+         };
+         w.setTarget = function(param1:* = null) : void
+         {
+         };
+         w.mapEventTrigger = function(param1:* = null) : void
+         {
+         };
+         w.queueLoad = function(param1:* = null) : void
+         {
+         };
+         w.copyAvatarMC = function(param1:MovieClip) : void
+         {
+            self.copyAvatarMC(param1);
+         };
+         return w;
+      }
+
+      public function copyAvatarMC(param1:MovieClip) : void
+      {
+         if(this.pMC != null)
+         {
+            this.pMC.copyAvatarTo(param1);
+         }
       }
       
       private function AddExternalCallbacks() : void
@@ -751,6 +804,7 @@ package character5_fla
          ExternalInterface.call("loaded");
          this.BGColor = 0;
          this.mcc = this["pMC"];
+         this.world.myAvatar = this.pMC;
          this.pMC.pAV.objData = this.objChar;
          this.txtName.text = this.toProperCase(this.objChar.strName);
          this.txtWeapon.text = "" + this.objChar.strWeaponName;

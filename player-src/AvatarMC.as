@@ -784,6 +784,13 @@ package
 
       internal var helmBackClass:Class;
 
+      // Held onto so a rig copied for a ground item ("I can see you..") can be
+      // given the same helm and weapon. They used to be locals in the two
+      // load handlers.
+      internal var helmClass:Class;
+
+      internal var weaponClass:Class;
+
       internal var backhairShown:Class;
 
       public var helmLoaded:Boolean = false;
@@ -1044,6 +1051,7 @@ package
             return;
          }
          this.clearGauntlet();
+         this.weaponClass = null;
          this.gauntletMode = this.pAV.objData.strWeaponType == "Gauntlet";
          if(this.gauntletMode)
          {
@@ -1086,6 +1094,7 @@ package
                this.mcChar.weaponOff.removeChildAt(1);
             }
             AssetClass = this.weaponDomain.getDefinition(this.pAV.objData.strWeaponLink) as Class;
+            this.weaponClass = AssetClass;
             x = new AssetClass();
             xx = new AssetClass();
             if(this.pAV.objData.strWeaponType == "Dagger")
@@ -1187,6 +1196,7 @@ package
          this.mcChar.head.helm.mhead.addChild(new _loc2_());
          this.mcChar.head.helm.mhead.visible = true;
          this.helmBackClass = domainClass(this.helmDomain,this.pAV.objData.strHelmLink + "_backhair");
+         this.helmClass = _loc2_;
          this.helmLoaded = true;
          this.refreshHead();
       }
@@ -1472,6 +1482,149 @@ package
             return _loc2_;
          }
          return _loc2_;
+      }
+
+      // ---- a copy of this avatar wearing the same gear --------------------
+      // The live game's World.copyAvatarMC hands the rig to an AvatarMCCopier
+      // (see AvatarMCCopier.as in Game4000r9.swf), which fills every part with
+      // the avatar's own symbols and tints. Ground items expect it: "I can see
+      // you.." (items/grounds/PlayerDummy.swf) calls it from the first frame of
+      // each dummy, so without it the item draws its bare placeholders and the
+      // script dies on a null world. Same copy, sourced from the classes this
+      // player already holds.
+      public function copyAvatarTo(param1:MovieClip) : void
+      {
+         var d:MovieClip = param1;
+         if(d == null || d.head == null)
+         {
+            return;
+         }
+         var g:String = this.pAV.objData.strGender == "M" ? "M" : "F";
+         var base:String = this.strSkinLinkage + g;
+         var face:Class = this.armorClass(base + "Head");
+         var piece:DisplayObject = null;
+         // Anything this avatar is not wearing must not show the dummy's own
+         // placeholder art either. copyPiece turns a part back on only when it
+         // has something to put there.
+         d.cape.visible = false;
+         d.backhair.visible = false;
+         d.robe.visible = false;
+         d.backrobe.visible = false;
+         d.weapon.visible = false;
+         d.head.hair.visible = false;
+         d.head.helm.visible = false;
+         if(face == null)
+         {
+            try
+            {
+               face = getDefinitionByName("mcHead" + g) as Class;
+            }
+            catch(err:Error)
+            {
+               face = null;
+            }
+         }
+         if(face != null)
+         {
+            piece = new face();
+            if(d.head.numChildren > 0)
+            {
+               d.head.removeChildAt(0);
+            }
+            d.head.addChildAt(piece,0);
+            if(this.mcChar.head.numChildren > 0)
+            {
+               this.copyColor(this.mcChar.head.getChildAt(0),piece);
+            }
+         }
+         this.copyPiece(d.chest,this.armorClass(base + "Chest"),this.mcChar.chest);
+         this.copyPiece(d.hip,this.armorClass(base + "Hip"),this.mcChar.hip);
+         this.copyPiece(d.idlefoot,this.armorClass(base + "FootIdle"),this.mcChar.idlefoot);
+         this.copyPiece(d.frontfoot,this.armorClass(base + "Foot"),this.mcChar.frontfoot);
+         this.copyPiece(d.backfoot,this.armorClass(base + "Foot"),this.mcChar.backfoot);
+         this.copyPiece(d.frontthigh,this.armorClass(base + "Thigh"),this.mcChar.frontthigh);
+         this.copyPiece(d.backthigh,this.armorClass(base + "Thigh"),this.mcChar.backthigh);
+         this.copyPiece(d.frontshin,this.armorClass(base + "Shin"),this.mcChar.frontshin);
+         this.copyPiece(d.backshin,this.armorClass(base + "Shin"),this.mcChar.backshin);
+         this.copyPiece(d.frontshoulder,this.armorClass(base + "Shoulder"),this.mcChar.frontshoulder);
+         this.copyPiece(d.backshoulder,this.armorClass(base + "Shoulder"),this.mcChar.backshoulder);
+         this.copyPiece(d.fronthand,this.armorClass(base + "Hand"),this.mcChar.fronthand);
+         this.copyPiece(d.backhand,this.armorClass(base + "Hand"),this.mcChar.backhand);
+         this.copyPiece(d.robe,this.armorClass(base + "Robe"),this.mcChar.robe);
+         this.copyPiece(d.backrobe,this.armorClass(base + "RobeBack"),this.mcChar.backrobe);
+         this.copyPiece(d.head.hair,this.hairClass,this.mcChar.head.hair);
+         this.copyPiece(d.head.helm,this.helmClass,this.mcChar.head.helm.mhead);
+         this.copyPiece(d.backhair,this.helmClass != null && this.helmShown ? this.helmBackClass : this.hairBackClass,this.mcChar.backhair);
+         // Weapons are not tinted, so there is no colour to mirror.
+         this.copyPiece(d.weapon,this.weaponClass,null);
+         if(this.weaponClass != null)
+         {
+            d.weapon.visible = this.weaponShown;
+         }
+         // A cape hangs off its own clip inside the rig; mirror that.
+         var capeClass:Class = this.capeDomain != null ? domainClass(this.capeDomain,this.pAV.objData.strCapeLink) : null;
+         if(capeClass != null && this.capeLoaded && this.capeShown)
+         {
+            while(d.cape.numChildren > 0)
+            {
+               d.cape.removeChildAt(0);
+            }
+            var cape:MovieClip = new capeClass();
+            d.cape.cape = cape;
+            d.cape.addChild(cape);
+            d.cape.visible = true;
+            if(this.mcChar.cape.numChildren > 0)
+            {
+               this.copyColor(this.mcChar.cape.getChildAt(0),cape);
+            }
+         }
+         // Hair shows only where this avatar shows it (a worn helm wins).
+         d.head.hair.visible = this.hairClass != null && !(this.helmLoaded && this.helmShown);
+         d.head.helm.visible = this.helmClass != null && this.helmShown;
+      }
+
+      private function copyPiece(param1:MovieClip, param2:Class, param3:MovieClip) : void
+      {
+         if(param1 == null || param2 == null)
+         {
+            return;
+         }
+         var piece:DisplayObject = new param2();
+         while(param1.numChildren > 0)
+         {
+            param1.removeChildAt(0);
+         }
+         param1.addChild(piece);
+         param1.visible = true;
+         if(param3 != null && param3.numChildren > 0)
+         {
+            this.copyColor(param3.getChildAt(0),piece);
+         }
+      }
+
+      // Colour travels with the copy: the rig tints each symbol it loads for
+      // skin/hair/base/trim, and fresh instances would otherwise wear the
+      // untinted art.
+      private function copyColor(param1:DisplayObject, param2:DisplayObject) : void
+      {
+         if(param1 == null || param2 == null)
+         {
+            return;
+         }
+         param2.transform.colorTransform = param1.transform.colorTransform;
+         var a:DisplayObjectContainer = param1 as DisplayObjectContainer;
+         var b:DisplayObjectContainer = param2 as DisplayObjectContainer;
+         if(a == null || b == null)
+         {
+            return;
+         }
+         var n:int = a.numChildren < b.numChildren ? a.numChildren : b.numChildren;
+         var i:int = 0;
+         while(i < n)
+         {
+            this.copyColor(a.getChildAt(i),b.getChildAt(i));
+            i++;
+         }
       }
    }
 }

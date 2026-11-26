@@ -243,6 +243,7 @@ namespace ManikinApp
                 T("armor_back_hand_silhouette", true, BackHandSilhouette),
                 T("pet_resize_keeps_facing", true, PetResizeKeepsFacing),
                 T("closeuii_before_misc_name", false, CloseUiiBeforeMisc),
+                T("misc_player_dummy_copies_avatar", true, MiscPlayerDummy),
                 T("flash_call_escapes_names", false, FlashCallEscapes),
                 T("ui_hide_checkboxes_toggle", true, UiHideCheckboxes),
                 T("ui_vars_apply_colors_gender", true, UiVarsColorsGender),
@@ -1055,6 +1056,42 @@ namespace ManikinApp
             Expect(Flash.TryCall("closeUii", out v, "True"), "closeUii(True) threw before any misc name was set");
             Expect(Flash.TryCall("closeUii", out v, "False"), "closeUii(False) threw");
             await Task.Yield();
+        }
+
+        // "I can see you.." (items/grounds/PlayerDummy.swf) asks the root for a
+        // world and copies the avatar onto each dummy rig it carries. The char
+        // page had no world, so the item's first frame threw before drawing
+        // anything and equipping it showed nothing at all.
+        async Task MiscPlayerDummy()
+        {
+            await SetGender("F");
+            await Load("Armor", ArmorRobeF);
+            await Load("Hair", HairBackF);
+            await Load("Misc", "items/grounds/PlayerDummy.swf");
+            await Task.Delay(1500);
+            Flash.FlashCall("hideMisc", new[] { "True" });
+            await Task.Delay(300);
+            int bare = Painted();
+            Flash.FlashCall("hideMisc", new[] { "False" });
+            await Task.Delay(1000);
+            int shown = Painted();
+            Snap("misc_player_dummy");
+            Expect(shown > bare + 150, "the dummy drew nothing: " + bare + " px without it, " + shown + " px with it");
+        }
+
+        // Pixels that differ from the corner of the stage (the background).
+        int Painted()
+        {
+            using (var bmp = Flash.Snapshot())
+            {
+                if (bmp == null) return 0;
+                int bg = bmp.GetPixel(3, 3).ToArgb();
+                int n = 0;
+                for (int y = 0; y < bmp.Height; y += 2)
+                    for (int x = 0; x < bmp.Width; x += 2)
+                        if (bmp.GetPixel(x, y).ToArgb() != bg) n++;
+                return n;
+            }
         }
 
         // Names with XML-special characters ("Shield & Blade") must reach the
