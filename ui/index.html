@@ -670,11 +670,11 @@ body{font-family:'Segoe UI Variable Text','Segoe UI',system-ui,Arial,sans-serif;
             <button class="cat-btn ghost" id="catalogSyncNo">Cancel</button>
           </div>
         </div>
-        <button class="cat-card" id="btnCatalogSync" title="Find items on aqcloset.com that this database does not have">
+        <button class="cat-card" id="btnCatalogSync" title="Find items on aqcloset.com or Skua's item sheet that this database does not have">
           <span class="cat-ico"><svg viewBox="0 0 16 16"><path d="M13.6 8A5.6 5.6 0 1 1 8 2.4a5.6 5.6 0 0 1 4 1.7"/><path d="M13.9 1.8v3.4h-3.4"/></svg><span class="cat-spin" aria-hidden="true"></span></span>
           <span class="cat-txt">
             <span class="cat-name">Catalog sync</span>
-            <span class="cat-sub" id="catalogSyncInfo">Add items aqcloset.com has that we are missing</span>
+            <span class="cat-sub" id="catalogSyncInfo">Add items aqcloset.com or Skua's sheet has that we are missing</span>
           </span>
           <span class="cat-go">&#8250;</span>
         </button>
@@ -2076,9 +2076,10 @@ try { dlSwfBox.checked = localStorage.getItem('fb.dlSwf') !== '0'; } catch (e) {
 dlSwfBox.onchange = applyDlSwf;
 applyDlSwf();
 
-// Settings > Catalog: diff aqcloset.com against whatever Apply() writes to
-// (the GitHub catalog when a token is set, else the Supabase table) and add
-// the items we are missing. Scan first (Read-only), then confirm the insert.
+// Settings > Catalog: diff aqcloset.com and Skua's item sheet against whatever
+// Apply() writes to (the GitHub catalog when a token is set, else the Supabase
+// table) and add the items we are missing. Scan first (Read-only), then confirm
+// the insert.
 // Live list of the items the sync has added, written into the monitor box
 // itself (the one that otherwise shows character data).
 let catFeedWrote = false;
@@ -2114,12 +2115,12 @@ const catInfo = document.getElementById('catalogSyncInfo');
 const catBusy = on => { if (catBtn) { catBtn.disabled = on; catBtn.classList.toggle('busy', on); } };
 if (catBtn) catBtn.onclick = async () => {
   catBusy(true);
-  catInfo.textContent = 'Scanning aqcloset.com for items we do not have (about a minute)...';
+  catInfo.textContent = 'Checking Skua\'s item sheet and aqcloset.com for items we do not have...';
   const monBox = document.getElementById('monitor');
   const monPrev = monBox ? monBox.textContent : '';
   catFeedWrote = false;
   const monRestore = () => { if (monBox && !catFeedWrote) monBox.textContent = monPrev || 'No character loaded yet.'; };
-  if (monBox) monBox.textContent = 'Scanning aqcloset.com for items we do not have...';
+  if (monBox) monBox.textContent = 'Checking Skua\'s item sheet and aqcloset.com...';
   const tick = setInterval(async () => {
     try {
       const p = JSON.parse(await post('catalogSyncProgress') || '{}');
@@ -2143,8 +2144,11 @@ if (catBtn) catBtn.onclick = async () => {
     catBusy(false);
     return;
   }
+  // Both lists, so "up to date" never claims one of them was checked when it
+  // was not.
+  const sheetOk = plan && !plan.skuaFailed;
   if (!plan.missing) {
-    catInfo.textContent = 'Up to date: all ' + plan.remote + ' items from aqcloset.com are already in the database.'
+    catInfo.textContent = 'Up to date: everything aqcloset.com' + (sheetOk ? ' and Skua\'s sheet' : '') + ' list is already in the database.'
       + (plan.pagesFailed ? ' (' + plan.pagesFailed + ' page(s) unreadable - rescan to be sure)' : '');
     monRestore();
     catBusy(false);
@@ -2158,7 +2162,9 @@ if (catBtn) catBtn.onclick = async () => {
   const pagesLeft = plan.pagesFailed || 0;
   const warn = pagesLeft ? '\n' + pagesLeft + ' page' + (pagesLeft === 1 ? '' : 's') + ' could not be read - run the scan again to cover them.' : '';
   if (monBox) {
-    monBox.textContent = 'aqcloset.com lists ' + plan.remote + ' items.\n' + plan.missing + ' of them are not in the database:\n\n'
+    monBox.textContent = 'aqcloset.com lists ' + plan.remote + ' items' +
+      (sheetOk ? ' and Skua\'s sheet lists ' + plan.skua : ' (Skua\'s sheet could not be read)') + '.\n'
+      + plan.missing + ' of them are not in the database:\n\n'
       + list.join('\n') + (plan.missing > list.length ? '\n\n... and ' + (plan.missing - list.length) + ' more' : '') + warn;
     monBox.scrollTop = 0;
   }

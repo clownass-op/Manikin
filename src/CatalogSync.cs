@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -13,32 +14,48 @@ using Newtonsoft.Json.Linq;
 
 namespace ManikinApp
 {
-    // CatalogSync: compares the public AQ Closet catalogue (aqcloset.com, no key,
-    // 300 calls/min) against what we already have and adds whatever we are
-    // missing. Two steps so nothing writes until the user says so:
-    //   Plan()  - read the API, diff by SWF path, remember the missing items
+    // CatalogSync: compares two public lists of AQ's items - the AQ Closet
+    // catalogue (aqcloset.com, no key, 300 calls/min) and Skua's item sheet (a
+    // community Google Sheet) - against what we already have and adds whatever
+    // we are missing. Two steps so nothing writes until the user says so:
+    //   Plan()  - read both lists, diff by SWF path, remember the missing items
     //   Apply() - write them to catalog.json.gz on GitHub (one commit, plus one
     //             for its meta) when a token is configured, else to the Supabase
     //             `swfs` table
+    // The two lists disagree by a few dozen rows, so the plan is their union.
     // The nightly snapshot unions the two stores, so neither can lose rows the
     // other added.
     static class CatalogSync
     {
         const string Api = "https://aqcloset.com";
+        // Skua's item sheet: a public Google Sheet (id in the path) read through
+        // opensheet.elk.sh, which turns a tab into a JSON array of its rows. Same
+        // columns as our catalog: name, path, category, itemGroup, link.
+        const string SkuaSheet = "https://opensheet.elk.sh/14H2J2nd8Pp-6Mof6rDIPjCPsE-iHEzkO_CC9OA0O0Us/Data";
         const int PageSize = 200;      // /api/items/latest caps limit at 200
         const int BatchSize = 200;     // rows per PostgREST insert
         const int RequestGapMs = 210;  // 300 calls/min is the API's limit: ~285/min
         const int Workers = 4;         // requests in flight while the gap paces them
 
-        sealed class Remote
+        internal sealed class Remote
         {
             public string Name, File, Slot, Wtype, Link;
+            // aqcloset's own finds are flagged on top of the sheet's rows; the
+            // scan uses that to stop paging once the sheet begins.
+            public bool Submitted;
         }
 
         sealed class PageResult
         {
             public int Total;
             public List<Remote> Items = new List<Remote>();
+        }
+
+        // What one pass over Skua's sheet found, for the log and the page.
+        internal sealed class SheetResult
+        {
+            public bool Failed;
+            public int Total, Missing, Held, Repeat, Junk;
         }
 
         static readonly object _gate = new object();
@@ -90,7 +107,15 @@ namespace ManikinApp
 
         static HttpClient CreateClient()
         {
-            var c = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            // Skua's sheet is 12.6 MB of JSON and 1.7 MB gzipped: taking the
+            // compressed bytes is the difference between a six second download
+            // and a fifth of a second. The handler also sets the Accept-Encoding
+            // header itself, so nothing here may set it by hand.
+            var handler = new HttpClientHandler
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            };
+            var c = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
             c.DefaultRequestHeaders.Add("Accept", "application/json");
             c.DefaultRequestHeaders.Add("User-Agent", "Manikin/1.1 catalog-sync");
             return c;
@@ -122,16 +147,22 @@ namespace ManikinApp
                 var have = Wardrobe.AllPaths();
                 if (have.Count == 0) return Fail("Our catalog did not load, so there is nothing to compare against.");
 
-                _phase = "Reading aqcloset.com";
-                PageResult first = FetchPage(0);
-                int total = first.Total > 0 ? first.Total : first.Items.Count;
-                _total = total;
-                _pageTotal = (total + PageSize - 1) / PageSize;
-
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var missing = new List<Remote>();
                 var counters = new int[3];        // repeats, already held, junk
                 var planGate = new object();
+                int total = 0, pages = 0, pagesFailed = 0;
+
+                // Skua's sheet goes first. aqcloset's database is that sheet plus
+                // its own finds, and the sheet is one ~1.7 MB gzipped request, so
+                // it answers the bulk of the diff without any paging. Whatever it
+                // cannot answer is the finds, which sit at the top of the API's
+                // list: the walk below stops at the first sheet row.
+                _phase = "Reading Skua's item sheet";
+                SheetResult sheet = ReadSkua(have, seen, missing);
+                _missing = missing.Count;
+                if (sheet.Failed)
+                    AppForm.Dbg("catalog scan: Skua's sheet could not be read - walking all of aqcloset.com instead");
 
                 Action<PageResult, int> take = (page, offset) =>
                 {
@@ -167,74 +198,114 @@ namespace ManikinApp
                         _missing = missing.Count;
                     }
                 };
-                take(first, 0);
-
-                // Pages 1..n run on Workers tasks, each one waiting its turn for
-                // a request slot rather than sleeping after a whole round trip.
-                var offsets = new List<int>();
-                for (int off = PageSize; off < total; off += PageSize) offsets.Add(off);
-                int nextPage = 0;
-                var missed = new List<int>();
-                var jobs = new Task[Workers];
-                for (int w = 0; w < Workers; w++)
+                if (sheet.Failed)
                 {
-                    jobs[w] = Task.Run(() =>
+                    // No sheet: the only way to see every row is to page through
+                    // the whole list.
+                    _phase = "Reading aqcloset.com";
+                    PageResult first = FetchPage(0);
+                    total = first.Total > 0 ? first.Total : first.Items.Count;
+                    _total = total;
+                    _pageTotal = (total + PageSize - 1) / PageSize;
+                    take(first, 0);
+
+                    // Pages 1..n run on Workers tasks, each one waiting its turn
+                    // for a request slot rather than sleeping after a whole round
+                    // trip.
+                    var offsets = new List<int>();
+                    for (int off = PageSize; off < total; off += PageSize) offsets.Add(off);
+                    int nextPage = 0;
+                    var missed = new List<int>();
+                    var jobs = new Task[Workers];
+                    for (int w = 0; w < Workers; w++)
                     {
-                        while (true)
+                        jobs[w] = Task.Run(() =>
                         {
-                            int i = Interlocked.Increment(ref nextPage) - 1;
-                            if (i >= offsets.Count) break;
-                            int off = offsets[i];
+                            while (true)
+                            {
+                                int i = Interlocked.Increment(ref nextPage) - 1;
+                                if (i >= offsets.Count) break;
+                                int off = offsets[i];
+                                WaitSlot();
+                                PageResult page = ReadPage(off);
+                                if (page == null) { lock (planGate) missed.Add(off); continue; }
+                                take(page, off);
+                            }
+                        });
+                    }
+                    Task.WaitAll(jobs);
+
+                    // A page that never answered is not an item we hold: retry
+                    // each missed offset so one bad connection cannot leave a hole
+                    // in the diff. Anything still unanswered is reported, never
+                    // hidden.
+                    for (int round = 0; round < 2 && missed.Count > 0; round++)
+                    {
+                        var again = new List<int>();
+                        foreach (int off in missed)
+                        {
                             WaitSlot();
                             PageResult page = ReadPage(off);
-                            if (page == null) { lock (planGate) missed.Add(off); continue; }
-                            take(page, off);
+                            if (page == null) again.Add(off);
+                            else take(page, off);
                         }
-                    });
-                }
-                Task.WaitAll(jobs);
+                        lock (planGate) { missed.Clear(); missed.AddRange(again); }
+                    }
+                    pagesFailed = missed.Count;
 
-                // A page that never answered is not an item we hold: retry each
-                // missed offset so one bad connection cannot leave a hole in the
-                // diff. Anything still unanswered is reported, never hidden.
-                for (int round = 0; round < 2 && missed.Count > 0; round++)
-                {
-                    var again = new List<int>();
-                    foreach (int off in missed)
+                    // Read the first offset past the reported total until a page
+                    // comes back empty. The API's `total` lags its row count, so
+                    // without this the tail rows are never scanned at all.
+                    int tail = total;
+                    for (int guard = 0; guard < 10; guard++)
                     {
                         WaitSlot();
-                        PageResult page = ReadPage(off);
-                        if (page == null) again.Add(off);
-                        else take(page, off);
+                        PageResult page = ReadPage(tail);
+                        if (page == null) { pagesFailed++; break; }
+                        if (page.Items.Count == 0) break;
+                        take(page, tail);
+                        if (page.Items.Count < PageSize) break;
+                        tail += PageSize;
                     }
-                    lock (planGate) { missed.Clear(); missed.AddRange(again); }
+                    pages = (total + PageSize - 1) / PageSize;
                 }
-                int pagesFailed = missed.Count;
-
-                // Read the first offset past the reported total until a page
-                // comes back empty. The API's `total` lags its row count, so
-                // without this the tail rows are never scanned at all.
-                int tail = total;
-                for (int guard = 0; guard < 10; guard++)
+                else
                 {
-                    WaitSlot();
-                    PageResult page = ReadPage(tail);
-                    if (page == null) { pagesFailed++; break; }
-                    if (page.Items.Count == 0) break;
-                    take(page, tail);
-                    if (page.Items.Count < PageSize) break;
-                    tail += PageSize;
+                    // aqcloset lists its own finds newest first, then the sheet by
+                    // item id, so the walk ends at the first sheet row - a few
+                    // pages instead of the whole catalogue. Everything below that
+                    // point is the sheet just read in one request.
+                    _phase = "Reading aqcloset.com finds";
+                    _done = 0; _total = 0; _pageDone = 0; _pageTotal = 0;
+                    int before = missing.Count;
+                    for (int offset = 0, guard = 0; guard < 40; guard++)
+                    {
+                        WaitSlot();
+                        PageResult page = ReadPage(offset);
+                        if (page == null) { pagesFailed++; break; }
+                        pages++;
+                        if (page.Total > 0) total = page.Total;
+                        int finds = page.Items.Count(it => it.Submitted);
+                        take(page, offset);
+                        if (page.Items.Count == 0 || finds < page.Items.Count) break;   // the sheet begins
+                        offset += PageSize;
+                    }
+                    AppForm.Dbg("catalog scan: aqcloset.com finds: read " + pages + " page(s) - missing " +
+                                (missing.Count - before) + ", already have " + counters[1]);
                 }
+
                 if (pagesFailed > 0)
                     AppForm.Dbg("catalog scan: " + pagesFailed + " page(s) never answered - the diff may be short");
 
                 int repeat = counters[0], held = counters[1], junk = counters[2];
-                int pages = (total + PageSize - 1) / PageSize;
-                // One line that says the whole list was read, so the Log tab can
-                // answer "did it get everything" without counting frames.
-                AppForm.Dbg("catalog scan: read " + pages + " pages, " + total + " items - missing " + missing.Count +
-                            ", already have " + held + ", repeats " + repeat + ", junk " + junk +
-                            (pagesFailed > 0 ? ", " + pagesFailed + " page(s) failed" : ""));
+                // One line per list that says what was read and what was missing,
+                // so the Log tab can answer "did it get everything" without
+                // counting frames.
+                if (sheet.Failed)
+                    AppForm.Dbg("catalog scan: read " + pages + " pages, " + total + " items - missing " + missing.Count +
+                                ", already have " + held + ", repeats " + repeat + ", junk " + junk);
+                AppForm.Dbg("catalog scan: Skua's sheet lists " + sheet.Total + " items - missing " + sheet.Missing +
+                            ", already have " + sheet.Held + ", repeats " + sheet.Repeat + ", junk " + sheet.Junk);
 
                 lock (_gate) _plan = missing;
                 _phase = pagesFailed == 0 ? "Scan complete" : "Scan incomplete";
@@ -254,6 +325,10 @@ namespace ManikinApp
                     alreadyHave = held,
                     repeats = repeat,
                     junk = junk,
+                    skua = sheet.Total,
+                    skuaMissing = sheet.Missing,
+                    skuaFailed = sheet.Failed,
+                    quick = !sheet.Failed,
                     target = Target(),
                     sample
                 });
@@ -644,18 +719,80 @@ namespace ManikinApp
                 {
                     foreach (JToken t in results)
                     {
+                        JToken submitted = t["submitted"];
                         page.Items.Add(new Remote
                         {
                             Name = ((string)t["name"] ?? "").Trim(),
                             File = Normalize((string)t["file"]),
                             Slot = ((string)t["slot"] ?? "").Trim().ToLowerInvariant(),
                             Wtype = (string)t["wtype"] ?? "",
-                            Link = (string)t["link"] ?? ""
+                            Link = (string)t["link"] ?? "",
+                            Submitted = submitted != null && submitted.Type == JTokenType.Boolean && (bool)submitted
                         });
                     }
                 }
                 return page;
             }
+        }
+
+        // Skua's sheet, one row at a time, appending what our catalog does not
+        // have. Streamed straight off the response: the sheet is 12.6 MB of JSON
+        // (1.7 MB gzipped) and neither a full JArray nor a 12 MB string is
+        // needed to keep the fields of one row. Paths are trimmed here (the sheet
+        // carries a few with a trailing tab) and normalised exactly like the
+        // API's, so both diff against the same key. A sheet that will not load is
+        // logged, never fatal: the scan falls back to the whole paged walk.
+        internal static SheetResult ReadSkua(HashSet<string> have, HashSet<string> seen, List<Remote> missing)
+        {
+            var res = new SheetResult();
+            try
+            {
+                using (var resp = Http.GetAsync(SkuaSheet, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult())
+                {
+                    resp.EnsureSuccessStatusCode();
+                    using (var stream = resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+                    using (var sr = new StreamReader(stream, Encoding.UTF8))
+                    using (var jr = new JsonTextReader(sr) { DateParseHandling = DateParseHandling.None })
+                    {
+                        while (jr.Read())
+                        {
+                            if (jr.TokenType != JsonToken.StartObject) continue;
+                            JObject row = JObject.Load(jr);
+                            string name = Text(row["name"]);
+                            string file = Normalize(Text(row["path"]));
+                            if (name.Length == 0 || file.Length == 0) continue;
+                            if (!file.EndsWith(".swf", StringComparison.OrdinalIgnoreCase)) { res.Junk++; continue; }
+                            res.Total++;
+                            if (have.Contains(file)) { res.Held++; continue; }
+                            if (!seen.Add(file)) { res.Repeat++; continue; }
+                            // Category and group are kept as the sheet writes them:
+                            // the catalog already stores 'Helm' / 'he' that way.
+                            missing.Add(new Remote
+                            {
+                                Name = name,
+                                File = file,
+                                Slot = Text(row["category"]),
+                                Wtype = Text(row["itemGroup"]),
+                                Link = Text(row["link"])
+                            });
+                            res.Missing++;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                res.Failed = true;
+                AppForm.Dbg("catalog scan: Skua's sheet failed: " + ex.Message);
+            }
+            return res;
+        }
+
+        // A JSON value as plain trimmed text, whatever type it arrived as.
+        static string Text(JToken t)
+        {
+            if (t == null || t.Type == JTokenType.Null) return "";
+            return t.ToString().Trim();
         }
 
         // Paths are the join key: both sides store items/helms/X.swf style paths.

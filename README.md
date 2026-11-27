@@ -124,11 +124,19 @@ replace the bytes stored under a path other clients already trust.
 
 ## Catalog sync
 
-Settings > Catalog diffs aqcloset.com against what we already have. With a token
-it appends the missing items to `catalog.json.gz` in the same repo (one commit
-per sync, plus one that refreshes the row count and sha256 in
-`catalog.meta.json`); without one it inserts them into the Supabase `swfs` table.
-The nightly snapshot unions both stores, so items added either way survive.
+Settings > Catalog diffs two public item lists against what we already have:
+Skua's item sheet (a community Google Sheet read through
+[opensheet.elk.sh](https://opensheet.elk.sh), one 1.7 MB gzipped request) and
+[aqcloset.com](https://aqcloset.com) (its public API). The sheet is read first
+because aqcloset's database *is* that sheet plus its own finds, and the API
+lists the finds first: the paged walk stops at the first sheet row, so a scan
+costs a handful of requests instead of all 342 pages (about five seconds
+instead of seventy). If the sheet cannot be read, the scan falls back to the
+full paged walk. The plan is the union of both gaps. With a token it
+appends the missing items to `catalog.json.gz` in the same repo (one commit per
+sync, plus one that refreshes the row count and sha256 in `catalog.meta.json`);
+without one it inserts them into the Supabase `swfs` table. The nightly snapshot
+unions both stores, so items added either way survive.
 
 ## Disclaimer
 

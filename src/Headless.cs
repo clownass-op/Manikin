@@ -270,6 +270,8 @@ namespace ManikinApp
                 T("loader_line_avoids_gear_list", false, LoaderPlacement),
                 T("downloads_cache_keeps_gender_paths", false, DownloadsCachePaths),
                 T("linkage_parser_prefers_gender", true, LinkagePrefersGender),
+                T("catalog_skua_sheet", true, CatalogSkuaSheet),
+                T("catalog_plan_quick", true, CatalogPlanQuick),
                 T("live_charpage_roundtrip", true, LiveCharPage),
                 T("live_load_keeps_ui_responsive", true, LiveLoadKeepsUiResponsive),
                 T("live_char_snapshot", true, LiveCharSnapshot),
@@ -1077,6 +1079,49 @@ namespace ManikinApp
             int shown = Painted();
             Snap("misc_player_dummy");
             Expect(shown > bare + 150, "the dummy drew nothing: " + bare + " px without it, " + shown + " px with it");
+        }
+
+        // Settings > Catalog reads two lists: aqcloset's API and Skua's item
+        // sheet (opensheet.elk.sh). The sheet is one ~12 MB JSON request, so
+        // this runs the real fetch and parse instead of a fixture: a changed
+        // sheet shape would otherwise only show up as a scan that finds nothing.
+        async Task CatalogSkuaSheet()
+        {
+            var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var missing = new List<CatalogSync.Remote>();
+            CatalogSync.SheetResult sheet = await Task.Run(() => CatalogSync.ReadSkua(have, seen, missing));
+            Console.WriteLine("  skua sheet: total=" + sheet.Total + " missing=" + sheet.Missing +
+                              " repeats=" + sheet.Repeat + " junk=" + sheet.Junk + " failed=" + sheet.Failed);
+            Expect(!sheet.Failed, "Skua's sheet could not be read");
+            Expect(sheet.Total > 60000, "only " + sheet.Total + " rows came out of the sheet");
+            Expect(missing.Any(r => r.File == "items/helms/lucashair.swf"),
+                "a path only the sheet lists did not survive the parse");
+            CatalogSync.Remote hair = missing.First(r => r.File == "items/helms/lucashair.swf");
+            Expect(hair.Name.Length > 0 && hair.Slot.Length > 0,
+                "the parsed row lost its name or category: '" + hair.Name + "'/''" + hair.Slot + "'");
+        }
+
+        // A whole scan must answer quickly: the sheet is one request and the
+        // paged API walk stops where the sheet starts, so a plan should cost a
+        // few seconds instead of a hundred pages' worth of rate limiting.
+        async Task CatalogPlanQuick()
+        {
+            Wardrobe.Reload();
+            var wait = Stopwatch.StartNew();
+            while (Wardrobe.AllPaths().Count == 0 && wait.ElapsedMilliseconds < 90000) await Task.Delay(250);
+            int ours = Wardrobe.AllPaths().Count;
+            Expect(ours > 10000, "our catalog did not load (" + ours + " paths)");
+
+            var sw = Stopwatch.StartNew();
+            JObject plan = JObject.Parse(await Task.Run(() => CatalogSync.Plan()));
+            sw.Stop();
+            Console.WriteLine("  plan in " + sw.ElapsedMilliseconds + " ms: " + plan.ToString(Formatting.None));
+            Expect((bool)plan["ok"], "plan failed: " + (string)plan["error"]);
+            Expect((bool)plan["quick"], "the scan fell back to the full walk");
+            Expect((int)plan["skua"] > 60000, "sheet rows " + (int)plan["skua"]);
+            Expect((int)plan["pages"] <= 10, "the walk read " + (int)plan["pages"] + " pages past the finds");
+            Expect(sw.ElapsedMilliseconds < 30000, "the scan took " + sw.ElapsedMilliseconds + " ms");
         }
 
         // Pixels that differ from the corner of the stage (the background).
